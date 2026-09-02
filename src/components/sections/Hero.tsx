@@ -1,48 +1,100 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import Image from "next/image";
+import { useGSAP } from "@gsap/react";
+import { gsap, ScrollTrigger } from "@/lib/gsap";
 import InkReveal from "@/components/InkReveal";
+import { P_MASK } from "@/lib/pMask";
+import heroBg from "@/app/assets/hero-bg.webp";
 
 /** Mask overlay color — keep in sync with the section background so there is no seam. */
 const MASK_COLOR: [number, number, number] = [252, 250, 248];
 
+/**
+ * Scroll length of the hero, in viewport heights. The P opens over the first
+ * ~75% (see `openEnd` on <InkReveal>), the rest holds on the full image.
+ */
+const SCROLL_VH = 340;
+
 export default function Hero() {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLDivElement>(null);
+  const revealRef = useRef(0);
+  const [reduced, setReduced] = useState(false);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const sync = () => setReduced(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+
+  useGSAP(
+    () => {
+      if (reduced) {
+        revealRef.current = 1;
+        gsap.set(imgRef.current, { scale: 1 });
+        return;
+      }
+
+      revealRef.current = 0;
+      const range = {
+        trigger: wrapRef.current,
+        start: "top top",
+        end: "bottom bottom",
+        scrub: true as const,
+      };
+
+      const st = ScrollTrigger.create({
+        ...range,
+        onUpdate: (self) => {
+          revealRef.current = self.progress;
+        },
+      });
+
+      // Hidden image settles from a slight zoom as the P opens.
+      const tween = gsap.fromTo(
+        imgRef.current,
+        { scale: 1.15 },
+        { scale: 1, ease: "none", scrollTrigger: range }
+      );
+
+      return () => {
+        st.kill();
+        tween.scrollTrigger?.kill();
+        tween.kill();
+      };
+    },
+    { dependencies: [reduced], scope: wrapRef }
+  );
+
   return (
     <section
-      className="relative h-dvh w-full overflow-hidden"
-      style={{ backgroundColor: `rgb(${MASK_COLOR.join(",")})` }}
+      ref={wrapRef}
+      className="relative w-full"
+      style={{
+        backgroundColor: `rgb(${MASK_COLOR.join(",")})`,
+        height: reduced ? undefined : `${SCROLL_VH}vh`,
+      }}
     >
-      {/* ── Revealed layer (z-0) ───────────────────────────────
-          Sits behind the ink mask and is uncovered as the cursor moves.
-          TODO: drop the hidden <Image /> in here later. */}
-      <div className="absolute inset-0 z-0 grid place-items-center bg-neutral-950 text-neutral-50">
-        {/*
-        <Image
-          src="/hero.jpg"
-          alt=""
-          fill
-          priority
-          className="object-cover"
-        />
-        */}
-        <div className="px-6 text-center">
-          <p className="mb-4 text-xs uppercase tracking-[0.35em] text-neutral-400">
-            Portfolio
-          </p>
-          <h1 className="text-[clamp(2.5rem,9vw,8rem)] font-semibold leading-[0.95] tracking-tight">
-            Paing Thit Xan
-          </h1>
-          <p className="mt-5 text-sm text-neutral-400 sm:text-base">
-            Designer &amp; Developer — interactive experiences
-          </p>
+      <div className="sticky top-0 h-svh w-full overflow-hidden">
+        {/* Hidden image (z-0) — revealed through the growing P and the ink brush. */}
+        <div ref={imgRef} className="absolute inset-0 will-change-transform">
+          <Image
+            src={heroBg}
+            alt=""
+            fill
+            priority
+            placeholder="blur"
+            sizes="100vw"
+            className="object-cover object-center"
+          />
         </div>
-      </div>
 
-      {/* ── Ink mask (sets its own z-1) ──────────────────────── */}
-      <InkReveal maskColor={MASK_COLOR} />
-
-      {/* ── Foreground hint (z-10, never intercepts the cursor) ── */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-8 z-10 flex justify-center">
-        <span className="text-xs uppercase tracking-[0.3em] text-neutral-500 mix-blend-difference">
-          Move your cursor
-        </span>
+        {/* White plane with the P-hole + cursor ink reveal (canvas sets its own z-1). */}
+        <InkReveal maskColor={MASK_COLOR} mask={P_MASK} revealRef={revealRef} />
       </div>
     </section>
   );

@@ -1,13 +1,45 @@
 "use client";
 import { useEffect, useRef, useCallback } from "react";
 
+/** A letterform to punch out of the white overlay (nonzero winding). */
+export interface RevealMask {
+  /** Coordinate space the `letter` path is authored in. */
+  width: number;
+  height: number;
+  /** The letterform subpath. */
+  letter: string;
+  /** Bounding box of `letter`, used to fit it to the viewport. */
+  letterBox: { x: number; y: number; w: number; h: number };
+}
+
 interface InkRevealProps {
   /** RGB color of the mask overlay, e.g. [252, 250, 248] */
   maskColor?: [number, number, number];
+  /**
+   * Vector overlay drawn instead of a flat fill. Rendered "cover" over the
+   * canvas; its hole grows as `revealRef` goes 0 → 1.
+   */
+  mask?: RevealMask;
+  /** Live scroll progress (0–1). Scales the mask hole open. */
+  revealRef?: React.RefObject<number>;
+  /** Progress value at which the overlay is fully gone; the rest is "hold". */
+  openEnd?: number;
+  /** Progress value at which the overlay starts dissolving away. */
+  fadeStart?: number;
+  /** Max multiplier applied to the fitted letter size at full open. */
+  revealScaleMax?: number;
+  /** Exponent on progress — >1 accelerates the open near the end. */
+  revealEase?: number;
+  /** Fraction of the viewport the letter fills at rest (contain-fit). */
+  fitFactor?: number;
   /** Radius of each ink stamp in px */
   brushSize?: number;
-  /** How long each stamp lives before fading (ms) */
+  /** How long a carved spot stays fully open before it starts healing (ms) */
+  revealHold?: number;
+  /** How long the heal-over fade takes once the hold ends (ms) */
   lifetime?: number;
+  /** How long a stamp takes to grow from rStart to its full radius (ms) */
+  expandTime?: number;
   /** Initial radius before the stamp expands */
   rStart?: number;
   /** Random variation factor for stamp radius (0–1) */
@@ -38,14 +70,25 @@ interface Stamp {
   rmax: number;
 }
 
+const clamp01 = (n: number) => (n < 0 ? 0 : n > 1 ? 1 : n);
+
 export default function InkReveal({
   maskColor = [252, 250, 248],
-  brushSize = 128,
-  lifetime = 600,
+  mask,
+  revealRef,
+  openEnd = 0.72,
+  fadeStart = 0.42,
+  revealScaleMax = 3.2,
+  revealEase = 2.2,
+  fitFactor = 0.82,
+  brushSize = 160,
+  revealHold = 1000,
+  lifetime = 800,
+  expandTime = 2000,
   rStart = 10,
   rVary = 0.45,
   stampStep = 10,
-  maxStamps = 200,
+  maxStamps = 400,
   segments = 36,
   wobble = [0.14, 0.08, 0.05],
   gradientInnerRadius = 0.2,
@@ -59,8 +102,52 @@ export default function InkReveal({
   const lastPosRef = useRef<{ x: number; y: number } | null>(null);
   const dimsRef = useRef({ w: 0, h: 0 });
   const loopRef = useRef<() => void>(() => {});
+  const maskPathRef = useRef<Path2D | null>(null);
 
   const mc = maskColor;
+
+  // Build the letterform path once per mask.
+  useEffect(() => {
+    maskPathRef.current =
+      mask && typeof Path2D !== "undefined" ? new Path2D(mask.letter) : null;
+  }, [mask]);
+
+  /**
+   * Paint the overlay: a full-canvas plane, then punch the letterform hole
+   * (fitted to the viewport and scaled open by `revealRef`).
+   */
+  const paintMask = useCallback(
+    (ctx: CanvasRenderingContext2D, w: number, h: number) => {
+      ctx.globalCompositeOperation = "source-over";
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = `rgb(${mc[0]},${mc[1]},${mc[2]})`;
+      ctx.fillRect(0, 0, w, h);
+
+      const letter = maskPathRef.current;
+      if (mask && letter) {
+        const reveal = clamp01(revealRef?.current ?? 0);
+        const openT = clamp01(reveal / openEnd);
+        const f = 1 + (revealScaleMax - 1) * Math.pow(openT, revealEase);
+        const box = mask.letterBox;
+        const s = fitFactor * Math.min(w / box.w, h / box.h) * f;
+
+        ctx.save();
+        ctx.globalCompositeOperation = "destination-out";
+        ctx.translate(w / 2, h / 2);
+        ctx.scale(s, s);
+        ctx.translate(-(box.x + box.w / 2), -(box.y + box.h / 2));
+        ctx.fillStyle = "#000";
+        ctx.fill(letter, "nonzero");
+        ctx.restore();
+
+        // The spiral can't fully clear by scale alone — dissolve what's left.
+        ctx.canvas.style.opacity = String(
+          1 - clamp01((reveal - fadeStart) / Math.max(1e-4, openEnd - fadeStart))
+        );
+      }
+    },
+    [mask, revealRef, openEnd, fadeStart, revealScaleMax, revealEase, fitFactor, mc]
+  );
 
   const resize = useCallback(() => {
     const canvas = canvasRef.current;
@@ -80,10 +167,8 @@ export default function InkReveal({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.globalCompositeOperation = "source-over";
-    ctx.fillStyle = `rgb(${mc[0]},${mc[1]},${mc[2]})`;
-    ctx.fillRect(0, 0, w, h);
-  }, [mc]);
+    paintMask(ctx, w, h);
+  }, [paintMask]);
 
   const carveInk = useCallback(
     (
@@ -165,29 +250,39 @@ export default function InkReveal({
     const now = performance.now();
     const stamps = stampsRef.current;
 
-    ctx.globalCompositeOperation = "source-over";
-    ctx.fillStyle = `rgb(${mc[0]},${mc[1]},${mc[2]})`;
-    ctx.fillRect(0, 0, w, h);
+    paintMask(ctx, w, h);
     ctx.globalCompositeOperation = "destination-out";
 
     for (let i = stamps.length - 1; i >= 0; i--) {
-      const t = (now - stamps[i].born) / lifetime;
-      if (t >= 1) {
+      const age = now - stamps[i].born;
+      if (age >= revealHold + lifetime) {
         stamps.splice(i, 1);
         continue;
       }
-      const ease = 1 - Math.pow(1 - t, 3);
+
+      // Grow to full radius quickly, then stay put.
+      const grow = Math.min(1, age / expandTime);
+      const ease = 1 - Math.pow(1 - grow, 3);
       const r = rStart + (stamps[i].rmax - rStart) * ease;
-      const alpha = 1 - t * t;
+
+      // Stay fully open for `revealHold`, then heal over `lifetime`.
+      let alpha = 1;
+      if (age > revealHold) {
+        const f = (age - revealHold) / lifetime;
+        alpha = 1 - f * f;
+      }
+
       carveInk(ctx, stamps[i].x, stamps[i].y, r, stamps[i].seed, alpha);
     }
 
-    if (stamps.length) {
+    // A mask overlay keeps redrawing (scroll can change it at any time);
+    // the plain fill only needs frames while ink stamps are alive.
+    if (stamps.length || mask) {
       requestAnimationFrame(() => loopRef.current());
     } else {
       runningRef.current = false;
     }
-  }, [carveInk, mc, lifetime, rStart]);
+  }, [paintMask, carveInk, mask, revealHold, lifetime, expandTime, rStart]);
 
   useEffect(() => {
     loopRef.current = loop;
@@ -205,6 +300,11 @@ export default function InkReveal({
     window.addEventListener("resize", resize);
     return () => window.removeEventListener("resize", resize);
   }, [resize]);
+
+  // With a scroll-driven mask, keep a frame loop alive from mount.
+  useEffect(() => {
+    if (mask) startLoop();
+  }, [mask, startLoop]);
 
   const getRelativePos = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
