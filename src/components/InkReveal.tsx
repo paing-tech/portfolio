@@ -22,6 +22,8 @@ interface InkRevealProps {
   mask?: RevealMask;
   /** Live scroll progress (0–1). Scales the mask hole open. */
   revealRef?: React.RefObject<number>;
+  /** Whether the cursor carves ink holes. Off = scroll-mask only. */
+  cursorInk?: boolean;
   /** Progress value at which the overlay is fully gone; the rest is "hold". */
   openEnd?: number;
   /** Progress value at which the overlay starts dissolving away. */
@@ -32,6 +34,10 @@ interface InkRevealProps {
   revealEase?: number;
   /** Fraction of the viewport the letter fills at rest (contain-fit). */
   fitFactor?: number;
+  /** Ink line traced along the cut edge so it reads on a light image. */
+  edgeColor?: string;
+  /** Width of that edge line, in screen px (0 disables it). */
+  edgeWidth?: number;
   /** Radius of each ink stamp in px */
   brushSize?: number;
   /** How long a carved spot stays fully open before it starts healing (ms) */
@@ -76,11 +82,14 @@ export default function InkReveal({
   maskColor = [252, 250, 248],
   mask,
   revealRef,
+  cursorInk = true,
   openEnd = 0.72,
   fadeStart = 0.42,
   revealScaleMax = 3.2,
   revealEase = 2.2,
   fitFactor = 0.82,
+  edgeColor = "rgba(23, 20, 17, 0.62)",
+  edgeWidth = 2,
   brushSize = 160,
   revealHold = 1000,
   lifetime = 800,
@@ -131,14 +140,34 @@ export default function InkReveal({
         const box = mask.letterBox;
         const s = fitFactor * Math.min(w / box.w, h / box.h) * f;
 
+        const cx = box.x + box.w / 2;
+        const cy = box.y + box.h / 2;
+        const place = () => {
+          ctx.translate(w / 2, h / 2);
+          ctx.scale(s, s);
+          ctx.translate(-cx, -cy);
+        };
+
+        // Punch the hole.
         ctx.save();
         ctx.globalCompositeOperation = "destination-out";
-        ctx.translate(w / 2, h / 2);
-        ctx.scale(s, s);
-        ctx.translate(-(box.x + box.w / 2), -(box.y + box.h / 2));
+        place();
         ctx.fillStyle = "#000";
         ctx.fill(letter, "nonzero");
         ctx.restore();
+
+        // Ink the cut edge so it reads even where the image behind is light.
+        if (edgeWidth > 0) {
+          ctx.save();
+          ctx.globalCompositeOperation = "source-over";
+          place();
+          ctx.lineJoin = "round";
+          ctx.lineCap = "round";
+          ctx.lineWidth = edgeWidth / s;
+          ctx.strokeStyle = edgeColor;
+          ctx.stroke(letter);
+          ctx.restore();
+        }
 
         // The spiral can't fully clear by scale alone — dissolve what's left.
         ctx.canvas.style.opacity = String(
@@ -146,7 +175,18 @@ export default function InkReveal({
         );
       }
     },
-    [mask, revealRef, openEnd, fadeStart, revealScaleMax, revealEase, fitFactor, mc]
+    [
+      mask,
+      revealRef,
+      openEnd,
+      fadeStart,
+      revealScaleMax,
+      revealEase,
+      fitFactor,
+      edgeColor,
+      edgeWidth,
+      mc,
+    ]
   );
 
   const resize = useCallback(() => {
@@ -319,23 +359,36 @@ export default function InkReveal({
         position: "absolute",
         inset: 0,
         zIndex: 1,
-        cursor: "none",
+        cursor: cursorInk ? "none" : undefined,
+        pointerEvents: cursorInk ? undefined : "none",
         ...style,
       }}
-      onMouseEnter={(e) => {
-        const pos = getRelativePos(e);
-        lastPosRef.current = pos;
-        stampAlong(pos.x, pos.y);
-        startLoop();
-      }}
-      onMouseMove={(e) => {
-        const pos = getRelativePos(e);
-        stampAlong(pos.x, pos.y);
-        startLoop();
-      }}
-      onMouseLeave={() => {
-        lastPosRef.current = null;
-      }}
+      onMouseEnter={
+        cursorInk
+          ? (e) => {
+              const pos = getRelativePos(e);
+              lastPosRef.current = pos;
+              stampAlong(pos.x, pos.y);
+              startLoop();
+            }
+          : undefined
+      }
+      onMouseMove={
+        cursorInk
+          ? (e) => {
+              const pos = getRelativePos(e);
+              stampAlong(pos.x, pos.y);
+              startLoop();
+            }
+          : undefined
+      }
+      onMouseLeave={
+        cursorInk
+          ? () => {
+              lastPosRef.current = null;
+            }
+          : undefined
+      }
     />
   );
 }
