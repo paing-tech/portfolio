@@ -34,10 +34,10 @@ interface InkRevealProps {
   revealEase?: number;
   /** Fraction of the viewport the letter fills at rest (contain-fit). */
   fitFactor?: number;
-  /** Ink line traced along the cut edge so it reads on a light image. */
-  edgeColor?: string;
-  /** Width of that edge line, in screen px (0 disables it). */
-  edgeWidth?: number;
+  /** Shadow cast inward from the cut edge, so the hole reads with depth. */
+  holeShadowColor?: string;
+  /** Blur radius of that inner shadow, in screen px (0 disables it). */
+  holeShadowSize?: number;
   /** Radius of each ink stamp in px */
   brushSize?: number;
   /** How long a carved spot stays fully open before it starts healing (ms) */
@@ -88,8 +88,8 @@ export default function InkReveal({
   revealScaleMax = 3.2,
   revealEase = 2.2,
   fitFactor = 0.82,
-  edgeColor = "rgba(23, 20, 17, 0.62)",
-  edgeWidth = 2,
+  holeShadowColor = "rgba(0, 0, 0, 0.55)",
+  holeShadowSize = 40,
   brushSize = 160,
   revealHold = 1000,
   lifetime = 800,
@@ -112,13 +112,26 @@ export default function InkReveal({
   const dimsRef = useRef({ w: 0, h: 0 });
   const loopRef = useRef<() => void>(() => {});
   const maskPathRef = useRef<Path2D | null>(null);
+  const invPathRef = useRef<Path2D | null>(null);
 
   const mc = maskColor;
 
-  // Build the letterform path once per mask.
+  // Build the letterform path (and its inverse, for the inner shadow) per mask.
   useEffect(() => {
-    maskPathRef.current =
-      mask && typeof Path2D !== "undefined" ? new Path2D(mask.letter) : null;
+    if (!mask || typeof Path2D === "undefined") {
+      maskPathRef.current = null;
+      invPathRef.current = null;
+      return;
+    }
+    const letter = new Path2D(mask.letter);
+    maskPathRef.current = letter;
+
+    const box = mask.letterBox;
+    const pad = Math.max(box.w, box.h);
+    const inv = new Path2D();
+    inv.rect(box.x - pad, box.y - pad, box.w + pad * 2, box.h + pad * 2);
+    inv.addPath(letter);
+    invPathRef.current = inv;
   }, [mask]);
 
   /**
@@ -156,16 +169,18 @@ export default function InkReveal({
         ctx.fill(letter, "nonzero");
         ctx.restore();
 
-        // Ink the cut edge so it reads even where the image behind is light.
-        if (edgeWidth > 0) {
+        // Shadow cast inward from the cut edge — gives the hole depth and
+        // makes it read against a light image without a hard outline.
+        const inv = invPathRef.current;
+        if (inv && holeShadowSize > 0) {
           ctx.save();
           ctx.globalCompositeOperation = "source-over";
           place();
-          ctx.lineJoin = "round";
-          ctx.lineCap = "round";
-          ctx.lineWidth = edgeWidth / s;
-          ctx.strokeStyle = edgeColor;
-          ctx.stroke(letter);
+          ctx.clip(letter, "nonzero"); // keep the shadow inside the hole
+          ctx.shadowColor = holeShadowColor;
+          ctx.shadowBlur = holeShadowSize; // screen px — not scaled by the CTM
+          ctx.fillStyle = "#000";
+          ctx.fill(inv, "evenodd"); // edge = hole boundary; blur bleeds inward
           ctx.restore();
         }
 
@@ -183,8 +198,8 @@ export default function InkReveal({
       revealScaleMax,
       revealEase,
       fitFactor,
-      edgeColor,
-      edgeWidth,
+      holeShadowColor,
+      holeShadowSize,
       mc,
     ]
   );
