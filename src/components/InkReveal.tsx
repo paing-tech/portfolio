@@ -24,10 +24,15 @@ interface InkRevealProps {
   revealRef?: React.RefObject<number>;
   /** Whether the cursor carves ink holes. Off = scroll-mask only. */
   cursorInk?: boolean;
-  /** Progress value at which the overlay is fully gone; the rest is "hold". */
+  /** Progress value at which the letterform has fully opened; the rest is "hold". */
   openEnd?: number;
-  /** Progress value at which the overlay starts dissolving away. */
-  fadeStart?: number;
+  /** Point inside the ink the zoom drifts toward (fraction of the letterBox). */
+  zoomAnchor?: [number, number];
+  /**
+   * Fraction of `openEnd` after which a short opacity fade cleans up any
+   * plane the zoom alone can't push off-screen (the P is a spiral). 1 = off.
+   */
+  cleanupFrom?: number;
   /** Max multiplier applied to the fitted letter size at full open. */
   revealScaleMax?: number;
   /** Exponent on progress — >1 accelerates the open near the end. */
@@ -84,10 +89,11 @@ export default function InkReveal({
   revealRef,
   cursorInk = true,
   openEnd = 0.72,
-  fadeStart = 0.42,
-  revealScaleMax = 3.2,
-  revealEase = 2.2,
-  fitFactor = 0.82,
+  zoomAnchor = [0.5, 0.42],
+  revealScaleMax = 18,
+  revealEase = 3.2,
+  fitFactor = 0.65,
+  cleanupFrom = 0.86,
   holeShadowColor = "rgba(0, 0, 0, 0.55)",
   holeShadowSize = 40,
   brushSize = 160,
@@ -153,12 +159,18 @@ export default function InkReveal({
         const box = mask.letterBox;
         const s = fitFactor * Math.min(w / box.w, h / box.h) * f;
 
+        // Zoom "into" the letterform: as it opens, drift the pivot from the
+        // centre toward a point deep inside the ink, so the scale-up pushes
+        // every scrap of the plane off-screen (no dissolve needed).
         const cx = box.x + box.w / 2;
         const cy = box.y + box.h / 2;
+        const k = openT * openT * (3 - 2 * openT); // smoothstep
+        const ax = cx + (box.x + box.w * zoomAnchor[0] - cx) * k;
+        const ay = cy + (box.y + box.h * zoomAnchor[1] - cy) * k;
         const place = () => {
           ctx.translate(w / 2, h / 2);
           ctx.scale(s, s);
-          ctx.translate(-cx, -cy);
+          ctx.translate(-ax, -ay);
         };
 
         // Punch the hole.
@@ -184,9 +196,10 @@ export default function InkReveal({
           ctx.restore();
         }
 
-        // The spiral can't fully clear by scale alone — dissolve what's left.
+        // The zoom carries the plane off-screen; a short fade at the very end
+        // mops up the last stray spiral arm the scale can't reach.
         ctx.canvas.style.opacity = String(
-          1 - clamp01((reveal - fadeStart) / Math.max(1e-4, openEnd - fadeStart))
+          1 - clamp01((openT - cleanupFrom) / Math.max(1e-4, 1 - cleanupFrom))
         );
       }
     },
@@ -194,10 +207,11 @@ export default function InkReveal({
       mask,
       revealRef,
       openEnd,
-      fadeStart,
       revealScaleMax,
       revealEase,
       fitFactor,
+      zoomAnchor,
+      cleanupFrom,
       holeShadowColor,
       holeShadowSize,
       mc,
