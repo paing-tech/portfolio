@@ -28,6 +28,8 @@ interface InkRevealProps {
   openEnd?: number;
   /** Point inside the ink the zoom drifts toward (fraction of the letterBox). */
   zoomAnchor?: [number, number];
+  /** Degrees the letterform rotates by the time it has fully opened. */
+  revealSpin?: number;
   /**
    * Fraction of `openEnd` after which a short opacity fade cleans up any
    * plane the zoom alone can't push off-screen (the P is a spiral). 1 = off.
@@ -90,6 +92,7 @@ export default function InkReveal({
   cursorInk = true,
   openEnd = 0.72,
   zoomAnchor = [0.5, 0.42],
+  revealSpin = 0,
   revealScaleMax = 18,
   revealEase = 3.2,
   fitFactor = 0.65,
@@ -167,8 +170,10 @@ export default function InkReveal({
         const k = openT * openT * (3 - 2 * openT); // smoothstep
         const ax = cx + (box.x + box.w * zoomAnchor[0] - cx) * k;
         const ay = cy + (box.y + box.h * zoomAnchor[1] - cy) * k;
+        const rot = (revealSpin * Math.PI) / 180 * k;
         const place = () => {
           ctx.translate(w / 2, h / 2);
+          ctx.rotate(rot);
           ctx.scale(s, s);
           ctx.translate(-ax, -ay);
         };
@@ -211,6 +216,7 @@ export default function InkReveal({
       revealEase,
       fitFactor,
       zoomAnchor,
+      revealSpin,
       cleanupFrom,
       holeShadowColor,
       holeShadowSize,

@@ -10,19 +10,26 @@ import heroScene from "@/app/assets/hero.webp";
 import zenChar from "@/app/assets/zen-full.webp";
 
 /** Cream — shared by the P plane, the ink cover and the section background. */
-const MASK_COLOR: [number, number, number] = [252, 250, 248];
+const MASK_COLOR: [number, number, number] = [255, 255, 255];
 const MASK_RGB = `rgb(${MASK_COLOR.join(",")})`;
 
 /** Scroll length of the hero, in viewport heights. */
 const SCROLL_VH = 340;
 
-/** Progress past which the cursor ink-carve turns on (P mostly dissolved). */
+/** Progress past which the cursor ink-carve turns on (P mostly zoomed through). */
 const INK_FROM = 0.4;
+
+/** Progress at which the P has finished opening (keep in step with InkReveal `openEnd`). */
+const P_OPEN_END = 0.72;
+
+/** Character scale: while the P is on screen → after the zoom-through. */
+const ZEN_SCALE_IN = 0.7;
+const ZEN_SCALE_OUT = 0.85;
 
 export default function Hero() {
   const wrapRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<HTMLDivElement>(null);
-  const textRef = useRef<HTMLDivElement>(null);
+  const zenRef = useRef<HTMLDivElement>(null);
   const revealRef = useRef(0);
   const [reduced, setReduced] = useState(false);
   const [inkOn, setInkOn] = useState(false);
@@ -39,13 +46,14 @@ export default function Hero() {
     () => {
       if (reduced) {
         revealRef.current = 1;
-        gsap.set(sceneRef.current, { scale: 1 });
-        gsap.set(textRef.current, { autoAlpha: 1, y: 0 });
+        gsap.set(sceneRef.current, { scale: 0.95 });
+        gsap.set(zenRef.current, { scale: ZEN_SCALE_OUT });
         return;
       }
 
       revealRef.current = 0;
       setInkOn(false);
+      gsap.set(zenRef.current, { scale: ZEN_SCALE_IN });
       const range = {
         trigger: wrapRef.current,
         start: "top top",
@@ -58,37 +66,24 @@ export default function Hero() {
         onUpdate: (self) => {
           revealRef.current = self.progress;
           setInkOn(self.progress > INK_FROM);
+          // Character grows from its "in the P" size to its "after zoom" size,
+          // reaching the latter as the P finishes opening.
+          const t = gsap.utils.clamp(0, 1, self.progress / P_OPEN_END);
+          gsap.set(zenRef.current, {
+            scale: gsap.utils.interpolate(ZEN_SCALE_IN, ZEN_SCALE_OUT, t),
+          });
         },
       });
-
-      // Intro text lifts and fades over the first viewport of scroll.
-      const textTween = gsap.fromTo(
-        textRef.current,
-        { autoAlpha: 1, y: 0 },
-        {
-          autoAlpha: 0,
-          y: -60,
-          ease: "none",
-          scrollTrigger: {
-            trigger: wrapRef.current,
-            start: "top top",
-            end: "+=90%",
-            scrub: true,
-          },
-        }
-      );
 
       // Scene settles from a slight zoom as the P opens.
       const sceneTween = gsap.fromTo(
         sceneRef.current,
-        { scale: 1.12 },
-        { scale: 1, ease: "none", scrollTrigger: range }
+        { scale: 0.8 },
+        { scale: 0.9, ease: "none", scrollTrigger: range }
       );
 
       return () => {
         st.kill();
-        textTween.scrollTrigger?.kill();
-        textTween.kill();
         sceneTween.scrollTrigger?.kill();
         sceneTween.kill();
       };
@@ -115,7 +110,7 @@ export default function Hero() {
             priority
             placeholder="blur"
             sizes="100vw"
-            className="object-cover object-center"
+            className="object-contain object-center"
           />
         </div>
 
@@ -123,7 +118,7 @@ export default function Hero() {
             Skipped for reduced motion (scene just shows). */}
         {!reduced && (
           <InkReveal
-            maskColor={MASK_COLOR}
+            maskColor={[105, 105, 105]}
             cursorInk={inkOn}
             style={{ zIndex: 20 }}
           />
@@ -131,50 +126,31 @@ export default function Hero() {
 
         {/* z-30 — the character. Always on top of the ink cover, so the
             carve reveals the scene *around* it, never the character itself. */}
-        <div className="pointer-events-none absolute inset-0 z-30">
+        <div
+          ref={zenRef}
+          className="pointer-events-none absolute inset-0 z-30 will-change-transform"
+        >
           <Image
             src={zenChar}
             alt=""
             fill
             priority
             sizes="100vw"
-            className="object-cover object-center"
+            className="object-contain object-center"
           />
         </div>
 
-        {/* z-40 — cream P plane + text, scroll-driven zoom & dissolve. No ink. */}
+        {/* z-40 — cream P plane, scroll-driven zoom-through. No ink, no text. */}
         <InkReveal
           maskColor={MASK_COLOR}
           mask={P_MASK}
           revealRef={revealRef}
           cursorInk={false}
+          fitFactor={0.5}
+          revealScaleMax={35}
+          revealSpin={45}
           style={{ zIndex: 40 }}
         />
-
-        {/* z-50 — intro text, never intercepts the pointer. */}
-        <div ref={textRef} className="pointer-events-none absolute inset-0 z-50">
-          <div
-            className="absolute inset-x-0 bottom-0 h-2/3"
-            style={{
-              background: `linear-gradient(to top, ${MASK_RGB} 12%, rgba(252,250,248,0.72) 45%, transparent)`,
-            }}
-          />
-          <div className="absolute bottom-8 left-8 max-w-[min(90vw,640px)] sm:bottom-12 sm:left-12 lg:bottom-16 lg:left-16">
-            <p className="mb-3 text-[11px] uppercase tracking-[0.35em] text-neutral-500">
-              Portfolio
-            </p>
-            <h1 className="text-[clamp(2.5rem,7vw,5.5rem)] font-medium leading-[0.95] tracking-tight text-neutral-900">
-              Paing Thit Xan
-            </h1>
-            <p className="mt-4 max-w-[42ch] text-sm text-neutral-600 sm:text-base">
-              Designer &amp; developer building interactive, scroll-driven
-              experiences.
-            </p>
-          </div>
-          <span className="absolute bottom-8 left-1/2 -translate-x-1/2 text-[10px] uppercase tracking-[0.3em] text-neutral-400">
-            Scroll ↓
-          </span>
-        </div>
       </div>
     </section>
   );
