@@ -9,6 +9,7 @@ import HeroStats from "@/components/sections/HeroStats";
 import HeroSocials from "@/components/sections/HeroSocials";
 import { TextMarquee } from "@/components/ui/TextMarquee";
 import { P_MASK } from "@/lib/pMask";
+import { useVisitorNumber } from "@/lib/visits";
 import heroScene from "@/app/assets/hero.webp";
 import zenChar from "@/app/assets/zen-full.webp";
 
@@ -51,6 +52,10 @@ export default function Hero() {
   const revealRef = useRef(0);
   const [reduced, setReduced] = useState(false);
   const [inkOn, setInkOn] = useState(false);
+
+  // Records the visit so the count stays accurate; not displayed yet
+  // (returns this visitor's number for a future "You're the Nth visitor").
+  useVisitorNumber();
 
   useEffect(() => {
     const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -203,14 +208,14 @@ export default function Hero() {
           {/* Name. Mobile: centred just below the P (P is width-bound there, its
               half-height ≈ 34vw). Desktop: pinned to the bottom-left corner. */}
           <div data-drift className="absolute inset-x-0 top-[calc(50%+36vw+1.5rem)] text-center text-[#000000] md:inset-x-auto md:top-auto md:bottom-10 md:left-10 md:text-left">
-            <h1 className="font-sans text-2xl font-medium tracking-tight md:text-4xl">
+            <h1 className="font-sans text-3xl font-medium tracking-tight md:text-4xl">
               Paing Thit Xan
             </h1>
             <TextMarquee height={48} hold={2.5} slide={0.6} className="justify-center md:justify-start">
               {ROLES.map((role) => (
                 <span
                   key={role}
-                  className="w-full whitespace-nowrap text-center text-lg font-medium tracking-tight md:text-left md:text-2xl"
+                  className="w-full whitespace-nowrap text-center text-2xl font-medium tracking-tight md:text-left md:text-3xl"
                 >
                   {role}
                 </span>
@@ -220,7 +225,7 @@ export default function Hero() {
 
           {/* Stats. Mobile: spread along the bottom. Desktop: bottom-right corner. */}
           <div data-drift className="absolute inset-x-4 bottom-8 md:inset-x-auto md:right-10 md:bottom-10">
-            <HeroStats className="justify-between text-center md:justify-end" />
+            <HeroStats className="text-center md:justify-end" />
           </div>
         </div>
       </div>
