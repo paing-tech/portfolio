@@ -5,6 +5,8 @@ import Image from "next/image";
 import { useGSAP } from "@gsap/react";
 import { gsap, ScrollTrigger } from "@/lib/gsap";
 import InkReveal from "@/components/InkReveal";
+import { MorphingText } from "@/components/ui/MorphingText";
+import HeroStats from "@/components/sections/HeroStats";
 import { P_MASK } from "@/lib/pMask";
 import heroScene from "@/app/assets/hero.webp";
 import zenChar from "@/app/assets/zen-full.webp";
@@ -25,6 +27,9 @@ const P_OPEN_END = 0.72;
 /** Character scale: while the P is on screen → after the zoom-through. */
 const ZEN_SCALE_IN = 0.7;
 const ZEN_SCALE_OUT = 0.85;
+
+/** Roles cycled beneath the name. Module-level so the morph hook stays stable. */
+const ROLES = ["AI Engineer", "Software Engineer", "Full-stack Developer"];
 
 export default function Hero() {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -152,13 +157,20 @@ export default function Hero() {
           style={{ zIndex: 40 }}
         />
 
-        {/* z-50 — name. Mobile: centred just below the P (P is width-bound there,
-            its half-height ≈ 34vw). Desktop: pinned to the bottom-left corner. */}
-        <h1
-          className="pointer-events-none absolute inset-x-0 top-[calc(50%+36vw+1.5rem)] z-50 text-center font-sans text-2xl font-medium tracking-tight text-[#000000] md:inset-x-auto md:top-auto md:bottom-10 md:left-10 md:text-left md:text-4xl"
-        >
-          Paing Thit Xan
-        </h1>
+        {/* z-50 — name + roles. Mobile: centred just below the P (P is width-bound
+            there, its half-height ≈ 34vw). Desktop: pinned to the bottom-left corner. */}
+        <div className="pointer-events-none absolute inset-x-0 top-[calc(50%+36vw+1.5rem)] z-50 text-center text-[#000000] md:inset-x-auto md:top-auto md:bottom-10 md:left-10 md:text-left">
+          <h1 className="font-sans text-2xl font-medium tracking-tight md:text-4xl">
+            Paing Thit Xan
+          </h1>
+          <MorphingText
+            texts={ROLES}
+            className="mt-2 h-6 max-w-none whitespace-nowrap text-lg font-medium tracking-tight md:mx-0 md:h-8 md:text-left md:text-2xl lg:text-2xl"
+          />
+        </div>
+
+        {/* z-50 — stats. Mobile: spread along the bottom. Desktop: bottom-right corner. */}
+        <HeroStats className="pointer-events-none absolute inset-x-4 bottom-8 z-50 justify-between text-center md:inset-x-auto md:right-10 md:bottom-10 md:justify-end md:text-left" />
       </div>
     </section>
   );
