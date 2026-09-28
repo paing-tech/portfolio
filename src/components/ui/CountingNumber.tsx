@@ -8,7 +8,7 @@ const format = new Intl.NumberFormat("en-US");
 
 interface CountingNumberProps {
   value: number;
-  /** Appended after the number, e.g. "+". */
+  /** Appended once the displayed number reaches `value`, e.g. "+". */
   suffix?: string;
   /** Seconds. */
   duration?: number;
@@ -32,7 +32,8 @@ export function CountingNumber({
     if (!el) return;
 
     const render = (n: number) => {
-      el.textContent = format.format(Math.round(n)) + suffix;
+      const shown = Math.round(n);
+      el.textContent = format.format(shown) + (shown === value ? suffix : "");
     };
 
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
@@ -65,7 +66,7 @@ export function CountingNumber({
 
   return (
     <span ref={ref} className={cn("tabular-nums", className)}>
-      0{suffix}
+      0
     </span>
   );
 }

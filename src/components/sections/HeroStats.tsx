@@ -70,7 +70,7 @@ export default function HeroStats({ className }: { className?: string }) {
         </div>
       ))}
       <div className="flex flex-col-reverse">
-        <dt className={labelClass}>Portfolio Views</dt>
+        <dt className={labelClass}>Portfolio Visits</dt>
         <dd>
           {typeof views === "number" ? (
             <CountingNumber value={views} className={numberClass} />

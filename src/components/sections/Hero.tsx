@@ -5,7 +5,6 @@ import Image from "next/image";
 import { useGSAP } from "@gsap/react";
 import { gsap, ScrollTrigger } from "@/lib/gsap";
 import InkReveal from "@/components/InkReveal";
-import { MorphingText } from "@/components/ui/MorphingText";
 import HeroStats from "@/components/sections/HeroStats";
 import { P_MASK } from "@/lib/pMask";
 import heroScene from "@/app/assets/hero.webp";
@@ -28,13 +27,14 @@ const P_OPEN_END = 0.72;
 const ZEN_SCALE_IN = 0.7;
 const ZEN_SCALE_OUT = 0.85;
 
-/** Roles cycled beneath the name. Module-level so the morph hook stays stable. */
-const ROLES = ["AI Engineer", "Software Engineer", "Full-stack Developer"];
+/** Progress by which the name + stats have faded out — they live on the P plane only. */
+const UI_FADE_END = 0.06;
 
 export default function Hero() {
   const wrapRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<HTMLDivElement>(null);
   const zenRef = useRef<HTMLDivElement>(null);
+  const uiRef = useRef<HTMLDivElement>(null);
   const revealRef = useRef(0);
   const [reduced, setReduced] = useState(false);
   const [inkOn, setInkOn] = useState(false);
@@ -53,12 +53,15 @@ export default function Hero() {
         revealRef.current = 1;
         gsap.set(sceneRef.current, { scale: 0.95 });
         gsap.set(zenRef.current, { scale: ZEN_SCALE_OUT });
+        // P starts fully open here, so there's no plane for the UI to sit on.
+        gsap.set(uiRef.current, { autoAlpha: 0 });
         return;
       }
 
       revealRef.current = 0;
       setInkOn(false);
       gsap.set(zenRef.current, { scale: ZEN_SCALE_IN });
+      gsap.set(uiRef.current, { autoAlpha: 1 });
       const range = {
         trigger: wrapRef.current,
         start: "top top",
@@ -76,6 +79,10 @@ export default function Hero() {
           const t = gsap.utils.clamp(0, 1, self.progress / P_OPEN_END);
           gsap.set(zenRef.current, {
             scale: gsap.utils.interpolate(ZEN_SCALE_IN, ZEN_SCALE_OUT, t),
+          });
+          // Name + stats fade out as soon as the P starts zooming.
+          gsap.set(uiRef.current, {
+            autoAlpha: 1 - gsap.utils.clamp(0, 1, self.progress / UI_FADE_END),
           });
         },
       });
@@ -157,20 +164,19 @@ export default function Hero() {
           style={{ zIndex: 40 }}
         />
 
-        {/* z-50 — name + roles. Mobile: centred just below the P (P is width-bound
-            there, its half-height ≈ 34vw). Desktop: pinned to the bottom-left corner. */}
-        <div className="pointer-events-none absolute inset-x-0 top-[calc(50%+36vw+1.5rem)] z-50 text-center text-[#000000] md:inset-x-auto md:top-auto md:bottom-10 md:left-10 md:text-left">
-          <h1 className="font-sans text-2xl font-medium tracking-tight md:text-4xl">
-            Paing Thit Xan
-          </h1>
-          <MorphingText
-            texts={ROLES}
-            className="mt-2 h-6 max-w-none whitespace-nowrap text-lg font-medium tracking-tight md:mx-0 md:h-8 md:text-left md:text-2xl lg:text-2xl"
-          />
-        </div>
+        {/* z-50 — UI on the P plane; fades out as the P zooms through. */}
+        <div ref={uiRef} className="pointer-events-none absolute inset-0 z-50">
+          {/* Name. Mobile: centred just below the P (P is width-bound there, its
+              half-height ≈ 34vw). Desktop: pinned to the bottom-left corner. */}
+          <div className="absolute inset-x-0 top-[calc(50%+36vw+1.5rem)] text-center text-[#000000] md:inset-x-auto md:top-auto md:bottom-10 md:left-10 md:text-left">
+            <h1 className="font-sans text-2xl font-medium tracking-tight md:text-4xl">
+              Paing Thit Xan
+            </h1>
+          </div>
 
-        {/* z-50 — stats. Mobile: spread along the bottom. Desktop: bottom-right corner. */}
-        <HeroStats className="pointer-events-none absolute inset-x-4 bottom-8 z-50 justify-between text-center md:inset-x-auto md:right-10 md:bottom-10 md:justify-end md:text-left" />
+          {/* Stats. Mobile: spread along the bottom. Desktop: bottom-right corner. */}
+          <HeroStats className="absolute inset-x-4 bottom-8 justify-between text-center md:inset-x-auto md:right-10 md:bottom-10 md:justify-end" />
+        </div>
       </div>
     </section>
   );
