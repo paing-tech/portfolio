@@ -7,6 +7,7 @@ import { gsap, ScrollTrigger } from "@/lib/gsap";
 import InkReveal from "@/components/InkReveal";
 import HeroStats from "@/components/sections/HeroStats";
 import HeroSocials from "@/components/sections/HeroSocials";
+import { TextMarquee } from "@/components/ui/TextMarquee";
 import { P_MASK } from "@/lib/pMask";
 import heroScene from "@/app/assets/hero.webp";
 import zenChar from "@/app/assets/zen-full.webp";
@@ -28,6 +29,9 @@ const P_OPEN_END = 0.72;
 const ZEN_SCALE_IN = 0.7;
 const ZEN_SCALE_OUT = 0.85;
 
+/** Roles scrolling beneath the name. */
+const ROLES = ["AI Engineer", "Software Engineer", "Full-stack Developer"];
+
 /** P zoom curve — passed to InkReveal, and reused so the UI rides the same zoom. */
 const P_SCALE_MAX = 35;
 const P_EASE = 3.2;
@@ -42,6 +46,7 @@ export default function Hero() {
   const wrapRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<HTMLDivElement>(null);
   const zenRef = useRef<HTMLDivElement>(null);
+  const coverRef = useRef<HTMLDivElement>(null);
   const uiRef = useRef<HTMLDivElement>(null);
   const revealRef = useRef(0);
   const [reduced, setReduced] = useState(false);
@@ -69,6 +74,7 @@ export default function Hero() {
       revealRef.current = 0;
       setInkOn(false);
       gsap.set(zenRef.current, { scale: ZEN_SCALE_IN });
+      gsap.set(coverRef.current, { filter: "invert(0)" });
       gsap.set(uiRef.current, { autoAlpha: 1 });
       const range = {
         trigger: wrapRef.current,
@@ -88,6 +94,8 @@ export default function Hero() {
           gsap.set(zenRef.current, {
             scale: gsap.utils.interpolate(ZEN_SCALE_IN, ZEN_SCALE_OUT, t),
           });
+          // Ink cover: black at rest → white once the P has fully opened.
+          gsap.set(coverRef.current, { filter: `invert(${t})` });
           // UI is "printed" on the P plane: each piece is pushed away from the
           // screen centre as the plane scales (logos up, name + stats down).
           const ui = uiRef.current;
@@ -143,14 +151,13 @@ export default function Hero() {
           />
         </div>
 
-        {/* z-20 — cream cover the cursor carves to reveal the scene.
+        {/* z-20 — ink cover the cursor carves to reveal the scene. Painted black;
+            the wrapper's invert() filter fades it to white as the P opens.
             Skipped for reduced motion (scene just shows). */}
         {!reduced && (
-          <InkReveal
-            maskColor={[105, 105, 105]}
-            cursorInk={inkOn}
-            style={{ zIndex: 20 }}
-          />
+          <div ref={coverRef} className="absolute inset-0 z-20 will-change-[filter]">
+            <InkReveal maskColor={[0, 0, 0]} cursorInk={inkOn} />
+          </div>
         )}
 
         {/* z-30 — the character. Always on top of the ink cover, so the
@@ -179,6 +186,9 @@ export default function Hero() {
           revealScaleMax={P_SCALE_MAX}
           revealEase={P_EASE}
           revealSpin={45}
+          // Light inner glow — a dark shadow would vanish against the black cover.
+          holeShadowColor="rgba(255, 255, 255, 0.8)"
+          holeShadowSize={60}
           style={{ zIndex: 40 }}
         />
 
@@ -196,6 +206,16 @@ export default function Hero() {
             <h1 className="font-sans text-2xl font-medium tracking-tight md:text-4xl">
               Paing Thit Xan
             </h1>
+            <TextMarquee height={48} hold={2.5} slide={0.6} className="justify-center md:justify-start">
+              {ROLES.map((role) => (
+                <span
+                  key={role}
+                  className="w-full whitespace-nowrap text-center text-lg font-medium tracking-tight md:text-left md:text-2xl"
+                >
+                  {role}
+                </span>
+              ))}
+            </TextMarquee>
           </div>
 
           {/* Stats. Mobile: spread along the bottom. Desktop: bottom-right corner. */}
