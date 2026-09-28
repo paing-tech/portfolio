@@ -28,8 +28,15 @@ const P_OPEN_END = 0.72;
 const ZEN_SCALE_IN = 0.7;
 const ZEN_SCALE_OUT = 0.85;
 
-/** Progress by which the name + stats have faded out — they live on the P plane only. */
-const UI_FADE_END = 0.06;
+/** P zoom curve — passed to InkReveal, and reused so the UI rides the same zoom. */
+const P_SCALE_MAX = 35;
+const P_EASE = 3.2;
+
+/** Scale of the P plane at a given scroll progress (mirrors InkReveal's paintMask). */
+const planeScale = (progress: number) => {
+  const openT = gsap.utils.clamp(0, 1, progress / P_OPEN_END);
+  return 1 + (P_SCALE_MAX - 1) * Math.pow(openT, P_EASE);
+};
 
 export default function Hero() {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -81,10 +88,19 @@ export default function Hero() {
           gsap.set(zenRef.current, {
             scale: gsap.utils.interpolate(ZEN_SCALE_IN, ZEN_SCALE_OUT, t),
           });
-          // Name + stats fade out as soon as the P starts zooming.
-          gsap.set(uiRef.current, {
-            autoAlpha: 1 - gsap.utils.clamp(0, 1, self.progress / UI_FADE_END),
-          });
+          // UI is "printed" on the P plane: each piece is pushed away from the
+          // screen centre as the plane scales (logos up, name + stats down).
+          const ui = uiRef.current;
+          if (ui) {
+            const grow = planeScale(self.progress) - 1;
+            const midY = ui.clientHeight / 2;
+            const els = ui.querySelectorAll<HTMLElement>("[data-drift]");
+            // Read every offset before writing any transform (no layout thrash).
+            const dists = Array.from(els, (el) => el.offsetTop + el.offsetHeight / 2 - midY);
+            els.forEach((el, i) => gsap.set(el, { y: dists[i] * grow }));
+            // Off-screen once the P is open — keep the links out of the tab order.
+            gsap.set(ui, { visibility: self.progress >= P_OPEN_END ? "hidden" : "visible" });
+          }
         },
       });
 
@@ -160,26 +176,32 @@ export default function Hero() {
           revealRef={revealRef}
           cursorInk={false}
           fitFactor={0.5}
-          revealScaleMax={35}
+          revealScaleMax={P_SCALE_MAX}
+          revealEase={P_EASE}
           revealSpin={45}
           style={{ zIndex: 40 }}
         />
 
-        {/* z-50 — UI on the P plane; fades out as the P zooms through. */}
+        {/* z-50 — UI on the P plane; each [data-drift] piece moves off-screen
+            with the zoom (see onUpdate). */}
         <div ref={uiRef} className="pointer-events-none absolute inset-0 z-50">
           {/* Contact links, top-centre. */}
-          <HeroSocials className="absolute top-8 left-1/2 -translate-x-1/2 md:top-10" />
+          <div data-drift className="absolute inset-x-0 top-8 flex justify-center md:top-10">
+            <HeroSocials />
+          </div>
 
           {/* Name. Mobile: centred just below the P (P is width-bound there, its
               half-height ≈ 34vw). Desktop: pinned to the bottom-left corner. */}
-          <div className="absolute inset-x-0 top-[calc(50%+36vw+1.5rem)] text-center text-[#000000] md:inset-x-auto md:top-auto md:bottom-10 md:left-10 md:text-left">
+          <div data-drift className="absolute inset-x-0 top-[calc(50%+36vw+1.5rem)] text-center text-[#000000] md:inset-x-auto md:top-auto md:bottom-10 md:left-10 md:text-left">
             <h1 className="font-sans text-2xl font-medium tracking-tight md:text-4xl">
               Paing Thit Xan
             </h1>
           </div>
 
           {/* Stats. Mobile: spread along the bottom. Desktop: bottom-right corner. */}
-          <HeroStats className="absolute inset-x-4 bottom-8 justify-between text-center md:inset-x-auto md:right-10 md:bottom-10 md:justify-end" />
+          <div data-drift className="absolute inset-x-4 bottom-8 md:inset-x-auto md:right-10 md:bottom-10">
+            <HeroStats className="justify-between text-center md:justify-end" />
+          </div>
         </div>
       </div>
     </section>
