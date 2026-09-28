@@ -6,6 +6,7 @@ import { useGSAP } from "@gsap/react";
 import { gsap, ScrollTrigger } from "@/lib/gsap";
 import InkReveal from "@/components/InkReveal";
 import HeroStats from "@/components/sections/HeroStats";
+import HeroSocials from "@/components/sections/HeroSocials";
 import { P_MASK } from "@/lib/pMask";
 import heroScene from "@/app/assets/hero.webp";
 import zenChar from "@/app/assets/zen-full.webp";
@@ -166,6 +167,9 @@ export default function Hero() {
 
         {/* z-50 — UI on the P plane; fades out as the P zooms through. */}
         <div ref={uiRef} className="pointer-events-none absolute inset-0 z-50">
+          {/* Contact links, top-centre. */}
+          <HeroSocials className="absolute top-8 left-1/2 -translate-x-1/2 md:top-10" />
+
           {/* Name. Mobile: centred just below the P (P is width-bound there, its
               half-height ≈ 34vw). Desktop: pinned to the bottom-left corner. */}
           <div className="absolute inset-x-0 top-[calc(50%+36vw+1.5rem)] text-center text-[#000000] md:inset-x-auto md:top-auto md:bottom-10 md:left-10 md:text-left">
