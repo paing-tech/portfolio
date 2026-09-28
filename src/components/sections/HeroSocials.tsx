@@ -29,7 +29,7 @@ export default function HeroSocials({ className }: { className?: string }) {
             href={href}
             aria-label={label}
             {...(external && { target: "_blank", rel: "noopener noreferrer" })}
-            className="pointer-events-auto block transition-opacity hover:opacity-60 focus-visible:opacity-60"
+            className="pointer-events-auto block transition-transform duration-200 ease-out hover:scale-130 focus-visible:scale-130 motion-safe:hover:animate-jiggle motion-safe:focus-visible:animate-jiggle"
           >
             <Image src={icon} alt="" width={w} height={h} className={cn("w-auto", size ?? "h-6 md:h-7")} />
           </a>
