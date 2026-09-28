@@ -151,6 +151,14 @@ export default function Hero() {
           revealSpin={45}
           style={{ zIndex: 40 }}
         />
+
+        {/* z-50 — name. Mobile: centred just below the P (P is width-bound there,
+            its half-height ≈ 34vw). Desktop: pinned to the bottom-left corner. */}
+        <h1
+          className="pointer-events-none absolute inset-x-0 top-[calc(50%+36vw+1.5rem)] z-50 text-center font-sans text-2xl font-medium tracking-tight text-[#000000] md:inset-x-auto md:top-auto md:bottom-10 md:left-10 md:text-left md:text-4xl"
+        >
+          Paing Thit Xan
+        </h1>
       </div>
     </section>
   );
