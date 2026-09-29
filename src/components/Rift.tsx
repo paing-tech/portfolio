@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useImperativeHandle, useMemo, useRef } from "react";
+import { useCallback, useEffect, useId, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { ReactNode, Ref } from "react";
 import { cn } from "@/lib/utils";
 
@@ -83,6 +83,20 @@ export default function Rift({ ref, children, className }: RiftProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const sizeRef = useRef({ w: 0, h: 0 });
   const progressRef = useRef(0);
+  /** Progress last drawn, so repeated scroll updates at the same spot are free. */
+  const drawnRef = useRef(-1);
+  /** Touch devices / small screens: glow from stacked strokes instead of SVG blur filters. */
+  const [lite, setLite] = useState(false);
+  const liteRef = useRef(false);
+  // Cached layer elements (looked up once per mount/mode, not every frame).
+  const elsRef = useRef<{
+    rim: SVGPathElement[];
+    edge: SVGPathElement[];
+    stick: SVGPathElement[];
+    dashThick: SVGPathElement[];
+    dashThin: SVGPathElement[];
+    inner: SVGGElement | null;
+  } | null>(null);
 
   // All randomness is fixed up front: the noise lattices that shape the edge.
   const seed = useMemo(() => {
@@ -158,7 +172,10 @@ export default function Rift({ ref, children, className }: RiftProps) {
       const world = worldRef.current;
       const svg = svgRef.current;
       const { w: W, h: H } = sizeRef.current;
-      if (!root || !world || !svg || !W || !H) return;
+      const els = elsRef.current;
+      if (!root || !world || !svg || !els || !W || !H) return;
+      if (p === drawnRef.current) return;
+      drawnRef.current = p;
 
       if (p <= 0) {
         root.style.visibility = "hidden";
@@ -229,7 +246,9 @@ export default function Rift({ ref, children, className }: RiftProps) {
         return { px, py, up, lo };
       };
 
-      const spacing = Math.max(diag / 650, 2);
+      // Outline resolution: fewer points on lite devices (the outline also clips
+      // the scene every frame, so point count matters twice).
+      const spacing = liteRef.current ? Math.max(diag / 300, 4) : Math.max(diag / 500, 3);
       const upper: Pt[] = [];
       const lower: Pt[] = [];
       const ss = [-L];
@@ -260,9 +279,8 @@ export default function Rift({ ref, children, className }: RiftProps) {
       };
       const thickD = dashes(DASH_THICK);
       const thinD = dashes(DASH_THIN);
-      svg.querySelectorAll<SVGPathElement>("[data-dash]").forEach((el) =>
-        el.setAttribute("d", el.dataset.dash === "thick" ? thickD : thinD)
-      );
+      for (const el of els.dashThick) el.setAttribute("d", thickD);
+      for (const el of els.dashThin) el.setAttribute("d", thinD);
 
       const ring = [...upper, ...lower.reverse()];
       const edge = "M" + ring.map(([x, y]) => `${x.toFixed(1)} ${y.toFixed(1)}`).join("L") + "Z";
@@ -301,16 +319,16 @@ export default function Rift({ ref, children, className }: RiftProps) {
       }
       // Rim layers draw the edge and sticks as one path, so each glow layer
       // composites once and the sticks meet the rim in a seamless junction.
-      svg.querySelectorAll<SVGPathElement>("[data-rim]").forEach((el) => el.setAttribute("d", edge + sticksD));
-      svg.querySelectorAll<SVGPathElement>("[data-stick]").forEach((el) => el.setAttribute("d", sticksD));
-
-      svg.querySelectorAll<SVGPathElement>("[data-edge]").forEach((el) => el.setAttribute("d", edge));
+      const rimD = edge + sticksD;
+      for (const el of els.rim) el.setAttribute("d", rimD);
+      for (const el of els.stick) el.setAttribute("d", sticksD);
+      for (const el of els.edge) el.setAttribute("d", edge);
 
       // Portal fill: a uniform violet veil across the opening. Fades out as
       // the rift opens fully.
       const f = clamp01((open - 0.45) / 0.4);
       const innerOpacity = emerge * (1 - f * f * (3 - 2 * f));
-      const inner = svg.querySelector<SVGGElement>("[data-inner]");
+      const inner = els.inner;
       if (inner) {
         inner.setAttribute("opacity", innerOpacity.toFixed(3));
         inner.style.display = innerOpacity > 0 ? "" : "none";
@@ -331,11 +349,42 @@ export default function Rift({ ref, children, className }: RiftProps) {
     [render]
   );
 
+  // Lite mode for touch devices and small screens.
+  useEffect(() => {
+    const mq = window.matchMedia("(pointer: coarse), (max-width: 767px)");
+    const sync = () => {
+      liteRef.current = mq.matches;
+      setLite(mq.matches);
+    };
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+
+  // Cache the layer elements whenever the layer set changes (mount / lite switch),
+  // then force a redraw into the new elements.
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const all = <T extends Element>(sel: string) => Array.from(svg.querySelectorAll<T>(sel));
+    elsRef.current = {
+      rim: all<SVGPathElement>("[data-rim]"),
+      edge: all<SVGPathElement>("[data-edge]"),
+      stick: all<SVGPathElement>("[data-stick]"),
+      dashThick: all<SVGPathElement>('[data-dash="thick"]'),
+      dashThin: all<SVGPathElement>('[data-dash="thin"]'),
+      inner: svg.querySelector<SVGGElement>("[data-inner]"),
+    };
+    drawnRef.current = -1;
+    render(progressRef.current);
+  }, [lite, render]);
+
   useEffect(() => {
     const measure = () => {
       const root = rootRef.current;
       if (!root) return;
       sizeRef.current = { w: root.clientWidth, h: root.clientHeight };
+      drawnRef.current = -1;
       render(progressRef.current);
     };
     measure();
@@ -358,19 +407,17 @@ export default function Rift({ ref, children, className }: RiftProps) {
       <svg ref={svgRef} className="absolute inset-0 h-full w-full overflow-visible" aria-hidden>
         <defs>
           <clipPath id={`${id}-opening`}><path data-edge /></clipPath>
-          <filter id={`${id}-bloom`} x="-100%" y="-100%" width="300%" height="300%" colorInterpolationFilters="sRGB">
+          {/* Filter regions are the viewport (userSpaceOnUse), not 3× each path's
+              bounding box — the rim spans the screen, so the default region made
+              every blur process ~9 screens of pixels per frame. */}
+          <filter id={`${id}-bloom`} filterUnits="userSpaceOnUse" x="-5%" y="-5%" width="110%" height="110%" colorInterpolationFilters="sRGB">
             <feGaussianBlur stdDeviation="10" />
           </filter>
-          <filter id={`${id}-halo`} x="-100%" y="-100%" width="300%" height="300%" colorInterpolationFilters="sRGB">
+          <filter id={`${id}-halo`} filterUnits="userSpaceOnUse" x="-5%" y="-5%" width="110%" height="110%" colorInterpolationFilters="sRGB">
             <feGaussianBlur stdDeviation="3" />
           </filter>
-          <filter id={`${id}-depth`} x="-100%" y="-100%" width="300%" height="300%" colorInterpolationFilters="sRGB">
+          <filter id={`${id}-depth`} filterUnits="userSpaceOnUse" x="-5%" y="-5%" width="110%" height="110%" colorInterpolationFilters="sRGB">
             <feGaussianBlur stdDeviation="5" />
-          </filter>
-          <filter id={`${id}-plasma`} x="-50%" y="-50%" width="200%" height="200%" colorInterpolationFilters="sRGB">
-            <feTurbulence type="fractalNoise" baseFrequency="0.025 0.075" numOctaves={2} seed={8} result="noise" />
-            <feDisplacementMap in="SourceGraphic" in2="noise" scale={6} xChannelSelector="R" yChannelSelector="G" />
-            <feGaussianBlur stdDeviation="0.65" />
           </filter>
           <linearGradient id={`${id}-light`} x1="0" y1="0" x2="1" y2="1">
             <stop offset="0" stopColor="#f5c5ff" />
@@ -387,26 +434,48 @@ export default function Rift({ ref, children, className }: RiftProps) {
           <path data-edge fill="#7b3dff" fillOpacity={0.35} />
         </g>
 
-        <g fill="none" strokeLinejoin="round" strokeLinecap="round">
-          {/* data-rim layers carry the edge plus the sticks (see render). */}
-          <path data-rim stroke="#9727ec" strokeOpacity="0.48" strokeWidth={40} filter={`url(#${id}-bloom)`} />
-          <g clipPath={`url(#${id}-opening)`}>
-            {/* Inner rim shadow: a dark band just inside the edge, then a wider falloff. */}
-            <path data-edge stroke="#12031f" strokeOpacity="0.9" strokeWidth={32} filter={`url(#${id}-depth)`} />
-            <path data-edge stroke="#2a0a4f" strokeOpacity="0.6" strokeWidth={70} filter={`url(#${id}-bloom)`} />
-          </g>
-          <g>
-            <path data-rim stroke="#d64bff" strokeOpacity="0.95" strokeWidth={15} filter={`url(#${id}-halo)`} />
-            <g filter={`url(#${id}-plasma)`}>
-              <path data-rim stroke="#e683ff" strokeWidth={6} />
-              <path data-dash="thick" stroke="#fff0ff" strokeWidth={3.4} />
+        {lite ? (
+          // Lite: the same look from stacked translucent strokes — no SVG filters,
+          // which phones render at 2–3× pixel density every frame.
+          <g fill="none" strokeLinejoin="round" strokeLinecap="round">
+            {/* Many faint steps approximate a blur's smooth falloff. */}
+            {[48, 40, 32, 24].map((w) => (
+              <path key={w} data-rim stroke="#9727ec" strokeOpacity="0.07" strokeWidth={w} />
+            ))}
+            <g clipPath={`url(#${id}-opening)`}>
+              {[76, 64, 52, 42].map((w) => (
+                <path key={w} data-edge stroke="#2a0a4f" strokeOpacity="0.1" strokeWidth={w} />
+              ))}
+              {[34, 28, 22, 16, 10].map((w) => (
+                <path key={w} data-edge stroke="#12031f" strokeOpacity="0.16" strokeWidth={w} />
+              ))}
             </g>
+            <path data-rim stroke="#d64bff" strokeOpacity="0.35" strokeWidth={16} />
+            <path data-rim stroke="#d64bff" strokeOpacity="0.6" strokeWidth={10} />
+            <path data-rim stroke="#e683ff" strokeWidth={6} />
+            <path data-dash="thick" stroke="#fff0ff" strokeWidth={3.4} />
+            <path data-rim stroke={`url(#${id}-light)`} strokeWidth={2.4} />
+            <path data-dash="thin" stroke="#fff8ff" strokeOpacity="0.95" strokeWidth={1.1} />
+            <path data-stick stroke="#fff8ff" strokeOpacity="0.95" strokeWidth={1.4} />
+          </g>
+        ) : (
+          <g fill="none" strokeLinejoin="round" strokeLinecap="round">
+            {/* data-rim layers carry the edge plus the sticks (see render). */}
+            <path data-rim stroke="#9727ec" strokeOpacity="0.48" strokeWidth={40} filter={`url(#${id}-bloom)`} />
+            <g clipPath={`url(#${id}-opening)`}>
+              {/* Inner rim shadow: a dark band just inside the edge, then a wider falloff. */}
+              <path data-edge stroke="#12031f" strokeOpacity="0.9" strokeWidth={32} filter={`url(#${id}-depth)`} />
+              <path data-edge stroke="#2a0a4f" strokeOpacity="0.6" strokeWidth={70} filter={`url(#${id}-bloom)`} />
+            </g>
+            <path data-rim stroke="#d64bff" strokeOpacity="0.95" strokeWidth={15} filter={`url(#${id}-halo)`} />
+            <path data-rim stroke="#e683ff" strokeWidth={6} />
+            <path data-dash="thick" stroke="#fff0ff" strokeWidth={3.4} />
             <path data-rim stroke={`url(#${id}-light)`} strokeWidth={2.4} />
             <path data-dash="thin" stroke="#fff8ff" strokeOpacity="0.95" strokeWidth={1.1} />
             {/* Sticks' white centre, like the rim's white core. */}
             <path data-stick stroke="#fff8ff" strokeOpacity="0.95" strokeWidth={1.4} />
           </g>
-        </g>
+        )}
       </svg>
     </div>
   );

@@ -120,6 +120,8 @@ export default function InkReveal({
   const lastPosRef = useRef<{ x: number; y: number } | null>(null);
   const dimsRef = useRef({ w: 0, h: 0 });
   const loopRef = useRef<() => void>(() => {});
+  /** Reveal value last painted, so an unchanged mask isn't repainted every frame. */
+  const lastRevealRef = useRef(-1);
   const maskPathRef = useRef<Path2D | null>(null);
   const invPathRef = useRef<Path2D | null>(null);
 
@@ -325,6 +327,17 @@ export default function InkReveal({
     const now = performance.now();
     const stamps = stampsRef.current;
 
+    // Nothing to redraw when no ink is alive and the scroll-driven mask hasn't
+    // moved (or has fully opened and faded out) since the last paint.
+    const reveal = clamp01(revealRef?.current ?? 0);
+    const last = lastRevealRef.current;
+    const idle = !stamps.length && mask && (reveal === last || (reveal >= openEnd && last >= openEnd));
+    if (idle) {
+      requestAnimationFrame(() => loopRef.current());
+      return;
+    }
+    lastRevealRef.current = reveal;
+
     paintMask(ctx, w, h);
     ctx.globalCompositeOperation = "destination-out";
 
@@ -357,7 +370,7 @@ export default function InkReveal({
     } else {
       runningRef.current = false;
     }
-  }, [paintMask, carveInk, mask, revealHold, lifetime, expandTime, rStart]);
+  }, [paintMask, carveInk, mask, revealRef, openEnd, revealHold, lifetime, expandTime, rStart]);
 
   useEffect(() => {
     loopRef.current = loop;
