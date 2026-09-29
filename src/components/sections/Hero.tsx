@@ -280,7 +280,9 @@ export default function Hero() {
             // Fades away entirely while the mountain toggle is on.
             style={{ opacity: sceneShown ? 0 : 1 }}
           >
-            <InkReveal maskColor={[0, 0, 0]} cursorInk={inkOn} />
+            {/* Carving stops once the rift starts: it would repaint this full-screen
+                canvas on every touch-scroll frame for an area the rift covers. */}
+            <InkReveal maskColor={[0, 0, 0]} cursorInk={inkOn && !riftStarted} />
           </div>
         )}
 

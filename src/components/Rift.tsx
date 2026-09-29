@@ -20,6 +20,16 @@ interface RiftProps {
 const TEAR_END = 0.32;
 /** Progress by which the opening covers the screen (the rest is a hold). */
 const OPEN_END = 0.82;
+/**
+ * Use the filter-free "lite" rim on touch devices / small screens. Off = phones
+ * get the same blurred glow as desktop (heavier; switch back on if it lags).
+ */
+const LITE_ON_MOBILE = true;
+/**
+ * Phone glow: drawn into a canvas at 1/GLOW_SCALE resolution (blurred with the
+ * canvas shadow, cheap at this size) and stretched to full size.
+ */
+const GLOW_SCALE = 3;
 /** White dash patterns on the rim ([on, off, on, off, …] in px along the tear). */
 const DASH_THICK = [7, 29, 21, 47, 3, 19];
 const DASH_THIN = [19, 8, 3, 17, 41, 11];
@@ -81,6 +91,7 @@ export default function Rift({ ref, children, className }: RiftProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const worldRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const glowRef = useRef<HTMLCanvasElement>(null);
   const sizeRef = useRef({ w: 0, h: 0 });
   const progressRef = useRef(0);
   /** Progress last drawn, so repeated scroll updates at the same spot are free. */
@@ -90,9 +101,7 @@ export default function Rift({ ref, children, className }: RiftProps) {
   const liteRef = useRef(false);
   // Cached layer elements (looked up once per mount/mode, not every frame).
   const elsRef = useRef<{
-    rim: SVGPathElement[];
     edge: SVGPathElement[];
-    stick: SVGPathElement[];
     dashThick: SVGPathElement[];
     dashThin: SVGPathElement[];
     inner: SVGGElement | null;
@@ -115,43 +124,6 @@ export default function Rift({ ref, children, className }: RiftProps) {
     // Spikes: mostly flat, occasionally long — linear interp makes them pointed.
     const spikeUp = lattice(1, (v) => Math.pow(v, 3) * 2.2);
     const spikeLo = lattice(1, (v) => Math.pow(v, 3) * 2.2);
-    // Rim sticks grow from the tear's biggest spikes. Spike tips sit on lattice
-    // points of the spike noise, so pick the 3 strongest per lip (spread apart)
-    // once here; positions are then stable, so sticks never hop between spikes.
-    const pickSpikes = (lat: Float32Array, offset: number, lip: number) => {
-      const cands: { i: number; v: number }[] = [];
-      // Spike lattice step is reach/23 along the tear, so ±16 stays well inside it
-      // (and skips the very centre, where the tear first punches through).
-      for (let i = -16; i <= 16; i++) if (Math.abs(i) >= 2) cands.push({ i, v: lat[i & 255] });
-      cands.sort((p1, p2) => p2.v - p1.v);
-      const chosen: { i: number; v: number }[] = [];
-      for (const c of cands) {
-        if (chosen.length >= 3) break;
-        if (chosen.every((k) => Math.abs(k.i - c.i) >= 5)) chosen.push(c);
-      }
-      // x: spike position in spike-lattice units along the tear (s = x · spike step).
-      return chosen.map((c) => ({ x: c.i - offset, lip }));
-    };
-    const makeStick = (
-      k: { x: number; lip: number },
-      lean = (rand() - 0.5) * 0.4,
-      heading?: number // fixed screen direction (radians, y down) instead of the lip's normal
-    ) => ({
-      ...k,
-      heading,
-      length: 0.14 + rand() * 0.1,
-      lean,
-      // Alternating turns so each stick zigzags like a crack rather than curling.
-      segs: Array.from({ length: 3 }, (_, i) => [0.5 + rand() * 0.1, (i % 2 ? 1 : -1) * (0.1 + rand() * 0.55)] as const),
-    });
-    // lip 1 = lower-left edge (spikeUp), -1 = upper-right edge (spikeLo, offset 5.3).
-    const sticks = [...pickSpikes(spikeUp[0], 0, 1), ...pickSpikes(spikeLo[0], 5.3, -1)]
-      .map((k) => makeStick(k))
-      // Drop the two lower-edge sticks near the tear's ends (screen corners).
-      .filter((k) => !(k.lip === 1 && (k.x === -15 || k.x === 13)));
-    // Centre spike on the lower edge, just below Zen's feet: runs out of its left
-    // side, heading left and slightly down.
-    sticks.push(makeStick({ x: 0, lip: 1 }, 0, Math.PI * 0.93));
     return {
       meander,
       swellUp,
@@ -162,7 +134,6 @@ export default function Rift({ ref, children, className }: RiftProps) {
       teethLo,
       spikeUp,
       spikeLo,
-      sticks,
     };
   }, []);
 
@@ -187,11 +158,13 @@ export default function Rift({ ref, children, className }: RiftProps) {
         // Fully open: the tear covers the screen, so drop the clip and the edge.
         world.style.clipPath = "none";
         svg.style.visibility = "hidden";
+        if (glowRef.current) glowRef.current.style.visibility = "hidden";
         return;
       }
       // Clear rather than "visible": an explicit visible would override the root's
       // hidden (visibility inherits), leaving a frozen edge after scrolling back up.
       svg.style.visibility = "";
+      if (glowRef.current) glowRef.current.style.visibility = "";
 
       const tear = clamp01(p / TEAR_END);
       const open = clamp01(p / OPEN_END);
@@ -212,6 +185,7 @@ export default function Rift({ ref, children, className }: RiftProps) {
       const base = diag * 0.075;
       const edgeOpacity = emerge * (1 - clamp01((open - 0.72) / 0.28));
       svg.style.opacity = String(edgeOpacity);
+      if (glowRef.current) glowRef.current.style.opacity = String(edgeOpacity);
 
       // Creases + fine teeth + occasional long spikes, in jag units (mostly outward).
       const edgeNoise = (jagL: Float32Array[], teethL: Float32Array[], spikeL: Float32Array[], s: number, o: number) =>
@@ -248,7 +222,7 @@ export default function Rift({ ref, children, className }: RiftProps) {
 
       // Outline resolution: fewer points on lite devices (the outline also clips
       // the scene every frame, so point count matters twice).
-      const spacing = liteRef.current ? Math.max(diag / 300, 4) : Math.max(diag / 500, 3);
+      const spacing = liteRef.current ? Math.max(diag / 180, 5) : Math.max(diag / 500, 3);
       const upper: Pt[] = [];
       const lower: Pt[] = [];
       const ss = [-L];
@@ -277,8 +251,8 @@ export default function Rift({ ref, children, className }: RiftProps) {
         }
         return d;
       };
-      const thickD = dashes(DASH_THICK);
-      const thinD = dashes(DASH_THIN);
+      const thickD = els.dashThick.length ? dashes(DASH_THICK) : "";
+      const thinD = els.dashThin.length ? dashes(DASH_THIN) : "";
       for (const el of els.dashThick) el.setAttribute("d", thickD);
       for (const el of els.dashThin) el.setAttribute("d", thinD);
 
@@ -287,41 +261,35 @@ export default function Rift({ ref, children, className }: RiftProps) {
 
       world.style.clipPath = `path("${edge}")`;
 
-      // Rim sticks: a single glowing line continuing out from each spike tip, drawn
-      // with the rim's own layers so it reads as part of the rim. Rooted on the lip
-      // (so it rides outward with it) and growing longer as the rift opens.
-      const unitS = Math.min(W, H);
-      let sticksD = "";
-      for (const k of seed.sticks) {
-        const s0 = k.x * base * 0.35; // spike tip: lattice point of the spike noise
-        const born = clamp01((L - Math.abs(s0)) / (reach * 0.12));
-        if (born <= 0 || Math.abs(s0) >= L) continue;
-        const e = edgeAt(s0);
-        const off = k.lip > 0 ? e.up : -e.lo;
-        let x = e.px + nx * off, y = e.py + ny * off;
-        const length = unitS * k.length * born * (0.1 + 3 * open);
-        const total = k.segs.reduce((t, [share]) => t + share, 0);
-        // A fixed heading is the stick's overall direction: offset the start by the
-        // zigzag's average turn so the kinks don't swing it off course.
-        let turned = 0, avgTurn = 0;
-        for (const [share, turn] of k.segs) {
-          turned += turn;
-          avgTurn += turned * (share / total);
-        }
-        let a = k.heading !== undefined ? k.heading - avgTurn : Math.atan2(ny * k.lip, nx * k.lip) + k.lean;
-        sticksD += `M${x.toFixed(1)} ${y.toFixed(1)}`;
-        for (const [share, turn] of k.segs) {
-          a += turn;
-          x += Math.cos(a) * length * (share / total);
-          y += Math.sin(a) * length * (share / total);
-          sticksD += `L${x.toFixed(1)} ${y.toFixed(1)}`;
-        }
+      // Phone glow: stroke the outline into the low-res canvas; the upscale blurs it.
+      const glow = glowRef.current;
+      const gctx = glow?.getContext("2d");
+      if (glow && gctx) {
+        const k = 1 / GLOW_SCALE;
+        // Draw the path far off-canvas and offset only its shadow back into view,
+        // so just the blurred shadow shows (shadow offset/blur are in canvas px).
+        const OFF = 10000;
+        gctx.setTransform(1, 0, 0, 1, 0, 0);
+        gctx.clearRect(0, 0, glow.width, glow.height);
+        gctx.setTransform(k, 0, 0, k, -OFF, 0);
+        gctx.beginPath();
+        ring.forEach(([x, y], i) => (i ? gctx.lineTo(x, y) : gctx.moveTo(x, y)));
+        gctx.closePath();
+        gctx.lineJoin = "round";
+        gctx.strokeStyle = "#000";
+        gctx.shadowOffsetX = OFF;
+        gctx.shadowOffsetY = 0;
+        // Wide soft spill, then a tighter, stronger glow.
+        gctx.shadowColor = "rgba(151, 39, 236, 0.55)";
+        gctx.shadowBlur = 10;
+        gctx.lineWidth = 30;
+        gctx.stroke();
+        gctx.shadowColor = "rgba(151, 39, 236, 0.6)";
+        gctx.shadowBlur = 4;
+        gctx.lineWidth = 12;
+        gctx.stroke();
       }
-      // Rim layers draw the edge and sticks as one path, so each glow layer
-      // composites once and the sticks meet the rim in a seamless junction.
-      const rimD = edge + sticksD;
-      for (const el of els.rim) el.setAttribute("d", rimD);
-      for (const el of els.stick) el.setAttribute("d", sticksD);
+
       for (const el of els.edge) el.setAttribute("d", edge);
 
       // Portal fill: a uniform violet veil across the opening. Fades out as
@@ -351,6 +319,7 @@ export default function Rift({ ref, children, className }: RiftProps) {
 
   // Lite mode for touch devices and small screens.
   useEffect(() => {
+    if (!LITE_ON_MOBILE) return;
     const mq = window.matchMedia("(pointer: coarse), (max-width: 767px)");
     const sync = () => {
       liteRef.current = mq.matches;
@@ -368,13 +337,17 @@ export default function Rift({ ref, children, className }: RiftProps) {
     if (!svg) return;
     const all = <T extends Element>(sel: string) => Array.from(svg.querySelectorAll<T>(sel));
     elsRef.current = {
-      rim: all<SVGPathElement>("[data-rim]"),
       edge: all<SVGPathElement>("[data-edge]"),
-      stick: all<SVGPathElement>("[data-stick]"),
       dashThick: all<SVGPathElement>('[data-dash="thick"]'),
       dashThin: all<SVGPathElement>('[data-dash="thin"]'),
       inner: svg.querySelector<SVGGElement>("[data-inner]"),
     };
+    // The glow canvas mounts with lite mode, after the first measure: size it here.
+    const glow = glowRef.current;
+    if (glow) {
+      glow.width = Math.ceil(sizeRef.current.w / GLOW_SCALE) || 1;
+      glow.height = Math.ceil(sizeRef.current.h / GLOW_SCALE) || 1;
+    }
     drawnRef.current = -1;
     render(progressRef.current);
   }, [lite, render]);
@@ -384,6 +357,10 @@ export default function Rift({ ref, children, className }: RiftProps) {
       const root = rootRef.current;
       if (!root) return;
       sizeRef.current = { w: root.clientWidth, h: root.clientHeight };
+      if (glowRef.current) {
+        glowRef.current.width = Math.ceil(root.clientWidth / GLOW_SCALE);
+        glowRef.current.height = Math.ceil(root.clientHeight / GLOW_SCALE);
+      }
       drawnRef.current = -1;
       render(progressRef.current);
     };
@@ -404,6 +381,9 @@ export default function Rift({ ref, children, className }: RiftProps) {
 
       {/* Fractured glass, violet light spill and a displaced white-hot rim create
           depth around the next scene. Energy flows without changing the aperture. */}
+      {/* Phone-only soft glow behind the rim (see GLOW_SCALE). */}
+      {lite && <canvas ref={glowRef} className="absolute inset-0 h-full w-full" aria-hidden />}
+
       <svg ref={svgRef} className="absolute inset-0 h-full w-full overflow-visible" aria-hidden>
         <defs>
           <clipPath id={`${id}-opening`}><path data-edge /></clipPath>
@@ -431,49 +411,31 @@ export default function Rift({ ref, children, className }: RiftProps) {
 
         {/* Portal fill: a uniform violet veil over the opening (see render). */}
         <g data-inner>
-          <path data-edge fill="#7b3dff" fillOpacity={0.35} />
+          <path data-edge fill="#7b3dff" fillOpacity={0.25} />
         </g>
 
         {lite ? (
-          // Lite: the same look from stacked translucent strokes — no SVG filters,
-          // which phones render at 2–3× pixel density every frame.
+          // Phones: the desktop rim minus every blurred layer (glow, halo and inner
+          // shadow) — blur filters are too costly to redraw each frame on phones.
           <g fill="none" strokeLinejoin="round" strokeLinecap="round">
-            {/* Many faint steps approximate a blur's smooth falloff. */}
-            {[48, 40, 32, 24].map((w) => (
-              <path key={w} data-rim stroke="#9727ec" strokeOpacity="0.07" strokeWidth={w} />
-            ))}
-            <g clipPath={`url(#${id}-opening)`}>
-              {[76, 64, 52, 42].map((w) => (
-                <path key={w} data-edge stroke="#2a0a4f" strokeOpacity="0.1" strokeWidth={w} />
-              ))}
-              {[34, 28, 22, 16, 10].map((w) => (
-                <path key={w} data-edge stroke="#12031f" strokeOpacity="0.16" strokeWidth={w} />
-              ))}
-            </g>
-            <path data-rim stroke="#d64bff" strokeOpacity="0.35" strokeWidth={16} />
-            <path data-rim stroke="#d64bff" strokeOpacity="0.6" strokeWidth={10} />
-            <path data-rim stroke="#e683ff" strokeWidth={6} />
+            <path data-edge stroke="#e683ff" strokeWidth={6} />
             <path data-dash="thick" stroke="#fff0ff" strokeWidth={3.4} />
-            <path data-rim stroke={`url(#${id}-light)`} strokeWidth={2.4} />
+            <path data-edge stroke={`url(#${id}-light)`} strokeWidth={2.4} />
             <path data-dash="thin" stroke="#fff8ff" strokeOpacity="0.95" strokeWidth={1.1} />
-            <path data-stick stroke="#fff8ff" strokeOpacity="0.95" strokeWidth={1.4} />
           </g>
         ) : (
           <g fill="none" strokeLinejoin="round" strokeLinecap="round">
-            {/* data-rim layers carry the edge plus the sticks (see render). */}
-            <path data-rim stroke="#9727ec" strokeOpacity="0.48" strokeWidth={40} filter={`url(#${id}-bloom)`} />
+            <path data-edge stroke="#9727ec" strokeOpacity="0.48" strokeWidth={40} filter={`url(#${id}-bloom)`} />
             <g clipPath={`url(#${id}-opening)`}>
               {/* Inner rim shadow: a dark band just inside the edge, then a wider falloff. */}
-              <path data-edge stroke="#12031f" strokeOpacity="0.9" strokeWidth={32} filter={`url(#${id}-depth)`} />
-              <path data-edge stroke="#2a0a4f" strokeOpacity="0.6" strokeWidth={70} filter={`url(#${id}-bloom)`} />
+              <path data-edge stroke="#12031f" strokeOpacity="0.9" strokeWidth={30} filter={`url(#${id}-depth)`} />
+              <path data-edge stroke="#2a0a4f" strokeOpacity="0.6" strokeWidth={50} filter={`url(#${id}-bloom)`} />
             </g>
-            <path data-rim stroke="#d64bff" strokeOpacity="0.95" strokeWidth={15} filter={`url(#${id}-halo)`} />
-            <path data-rim stroke="#e683ff" strokeWidth={6} />
+            <path data-edge stroke="#d64bff" strokeOpacity="0.95" strokeWidth={15} filter={`url(#${id}-halo)`} />
+            <path data-edge stroke="#e683ff" strokeWidth={6} />
             <path data-dash="thick" stroke="#fff0ff" strokeWidth={3.4} />
-            <path data-rim stroke={`url(#${id}-light)`} strokeWidth={2.4} />
+            <path data-edge stroke={`url(#${id}-light)`} strokeWidth={2.4} />
             <path data-dash="thin" stroke="#fff8ff" strokeOpacity="0.95" strokeWidth={1.1} />
-            {/* Sticks' white centre, like the rim's white core. */}
-            <path data-stick stroke="#fff8ff" strokeOpacity="0.95" strokeWidth={1.4} />
           </g>
         )}
       </svg>
