@@ -24,9 +24,16 @@ const SCROLL_VH = 340;
 /** Extra scroll after the P for the dimensional rift to tear open, in viewport heights. */
 const RIFT_VH = 220;
 
-/** The next scene, revealed through the rift. */
+/**
+ * The next scene, revealed through the rift: a portrait image under 768px wide
+ * (the same breakpoint as `isMobile`), landscape otherwise. The hidden one isn't
+ * downloaded (lazy images skip display: none).
+ */
 const RIFT_WORLD = (
-  <Image src="/exhibition.png" alt="" fill sizes="100vw" className="object-cover object-center" />
+  <>
+    <Image src="/exhibition-mobile.png" alt="" fill sizes="100vw" className="object-cover object-center md:hidden" />
+    <Image src="/exhibition.png" alt="" fill sizes="100vw" className="hidden object-cover object-center md:block" />
+  </>
 );
 
 /** Progress past which the cursor ink-carve turns on (P mostly zoomed through). */
@@ -35,16 +42,35 @@ const INK_FROM = 0.4;
 /** Progress at which the P has finished opening (keep in step with InkReveal `openEnd`). */
 const P_OPEN_END = 0.72;
 
-/** Character scale: while the P is on screen → after the zoom-through. */
-const ZEN_SCALE_IN = 0.7;
-const ZEN_SCALE_OUT = 0.85;
+/**
+ * Sizes of the character and the mountain scene, for desktop and phones
+ * (screens under 768px wide). `in` = while inside the P hole on the landing view,
+ * `out` = after the P has zoomed through. 1 = the art fitted to the screen width.
+ */
+const ZEN_SCALE = {
+  desktop: { in: 0.7, out: 0.85 },
+  mobile: { in: 1.3, out: 1.5 },
+};
+const SCENE_SCALE = {
+  desktop: { in: 0.8, out: 0.9 },
+  mobile: { in: 1.4, out: 1.6 },
+};
+const isMobile = () => window.innerWidth < 768;
 
-/** Landing spot in exhibition.png (1920×1080), normalised: the floor circle's front edge. */
-const STAGE = { x: 0.5, y: 0.7, w: 1920, h: 1080 };
+/** Landing spot in each hall image (px size + normalised spot): the floor circle's front edge. */
+const STAGE = {
+  desktop: { x: 0.5, y: 0.7, w: 1920, h: 1080 }, // exhibition.png
+  mobile: { x: 0.5, y: 0.6, w: 941, h: 1672 }, // exhibition-mobile.png
+};
 /** Character art in zen-full.webp (3840×2675): feet line, height and width, normalised. */
 const ZEN_ART = { w: 3840, h: 2675, feet: 0.8187, height: 0.5114, width: 0.2817 };
 /** Character height on the stage, as a fraction of the hall image's on-screen height. */
-const STAGE_HEIGHT = 0.35;
+const STAGE_HEIGHT = { desktop: 0.35, mobile: 0.24 };
+/**
+ * Hall size, scaled about the screen centre on top of filling the screen
+ * (object-cover). Keep ≥ 1, or empty bars show at the edges.
+ */
+const HALL_SCALE = { desktop: 1, mobile: 1 };
 /** Rift progress over which the character walks into the hall: it waits until the
  *  tear has run corner to corner (≈0.2), then walks in quickly. */
 const WALK_FROM = 0.2;
@@ -67,6 +93,7 @@ export default function Hero() {
   const wrapRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<HTMLDivElement>(null);
   const zenRef = useRef<HTMLDivElement>(null);
+  const hallRef = useRef<HTMLDivElement>(null);
   const shadowRef = useRef<HTMLDivElement>(null);
   const coverRef = useRef<HTMLDivElement>(null);
   const uiRef = useRef<HTMLDivElement>(null);
@@ -99,8 +126,9 @@ export default function Hero() {
     () => {
       if (reduced) {
         revealRef.current = 1;
-        gsap.set(sceneRef.current, { scale: 0.95 });
-        gsap.set(zenRef.current, { scale: ZEN_SCALE_OUT });
+        const size = isMobile() ? "mobile" : "desktop";
+        gsap.set(sceneRef.current, { scale: SCENE_SCALE[size].out });
+        gsap.set(zenRef.current, { scale: ZEN_SCALE[size].out });
         // P starts fully open here, so there's no plane for the UI to sit on.
         gsap.set(uiRef.current, { autoAlpha: 0 });
         return;
@@ -109,9 +137,9 @@ export default function Hero() {
       revealRef.current = 0;
       setInkOn(false);
 
-      // The character is driven by both zones, so it's placed from one function:
-      // P zoom → grows to its "after zoom" size; rift → shrinks and walks up
-      // until its feet stand on the hall's floor circle.
+      // The character (and the scene's scale) are driven by both zones, so they're
+      // placed from one function: P zoom → grows to its "after zoom" size; rift →
+      // shrinks and walks up until its feet stand on the hall's floor circle.
       let pProg = 0;
       let riftProg = 0;
       const placeZen = () => {
@@ -122,7 +150,12 @@ export default function Hero() {
         const H = zen.clientHeight;
 
         const tP = gsap.utils.clamp(0, 1, pProg / P_OPEN_END);
-        const sOut = gsap.utils.interpolate(ZEN_SCALE_IN, ZEN_SCALE_OUT, tP);
+        const size = isMobile() ? "mobile" : "desktop";
+        const sOut = gsap.utils.interpolate(ZEN_SCALE[size].in, ZEN_SCALE[size].out, tP);
+        // Scene settles from a slight zoom as the P opens.
+        gsap.set(sceneRef.current, {
+          scale: gsap.utils.interpolate(SCENE_SCALE[size].in, SCENE_SCALE[size].out, pProg),
+        });
         const walk = gsap.utils.clamp(0, 1, (riftProg - WALK_FROM) / (WALK_TO - WALK_FROM));
         const tR = walk * walk * (3 - 2 * walk); // ease-in-out: sets off and settles smoothly
 
@@ -130,11 +163,14 @@ export default function Hero() {
         const fit = Math.min(W / ZEN_ART.w, H / ZEN_ART.h);
         const artH = ZEN_ART.h * fit;
         const feetLocal = (H - artH) / 2 + ZEN_ART.feet * artH;
-        // Hall is object-cover: where its floor circle lands on this screen.
-        const cover = Math.max(W / STAGE.w, H / STAGE.h);
-        const hallH = STAGE.h * cover;
-        const stageY = (H - hallH) / 2 + STAGE.y * hallH;
-        const sEnd = (STAGE_HEIGHT * hallH) / (ZEN_ART.height * artH);
+        // Hall is object-cover, then scaled about the centre by HALL_SCALE: where
+        // its floor circle lands on this screen.
+        gsap.set(hallRef.current, { scale: HALL_SCALE[size] });
+        const stage = STAGE[size];
+        const cover = Math.max(W / stage.w, H / stage.h) * HALL_SCALE[size];
+        const hallH = stage.h * cover;
+        const stageY = (H - hallH) / 2 + stage.y * hallH;
+        const sEnd = (STAGE_HEIGHT[size] * hallH) / (ZEN_ART.height * artH);
         const yEnd = stageY - (H / 2 + (feetLocal - H / 2) * sEnd);
 
         const scale = gsap.utils.interpolate(sOut, sEnd, tR);
@@ -146,7 +182,7 @@ export default function Hero() {
           const feetY = H / 2 + (feetLocal - H / 2) * scale + y;
           const sw = ZEN_ART.width * ZEN_ART.w * fit * scale * 0.8;
           gsap.set(shadow, {
-            x: W * STAGE.x - sw / 2,
+            x: W * stage.x - sw / 2,
             y: feetY - sw * 0.09,
             width: sw,
             height: sw * 0.18,
@@ -196,13 +232,6 @@ export default function Hero() {
         },
       });
 
-      // Scene settles from a slight zoom as the P opens.
-      const sceneTween = gsap.fromTo(
-        sceneRef.current,
-        { scale: 0.8 },
-        { scale: 0.9, ease: "none", scrollTrigger: range }
-      );
-
       // Rift: tears open over the scroll that follows the P.
       const riftSt = ScrollTrigger.create({
         trigger: riftZoneRef.current,
@@ -222,8 +251,6 @@ export default function Hero() {
         window.removeEventListener("resize", onResize);
         st.kill();
         riftSt.kill();
-        sceneTween.scrollTrigger?.kill();
-        sceneTween.kill();
       };
     },
     { dependencies: [reduced], scope: wrapRef }
@@ -289,7 +316,9 @@ export default function Hero() {
         {/* z-25 — dimensional rift to the next world; the character stays in front. */}
         {!reduced && (
           <Rift ref={riftRef} className="z-[25]">
-            {RIFT_WORLD}
+            <div ref={hallRef} className="absolute inset-0">
+              {RIFT_WORLD}
+            </div>
           </Rift>
         )}
 
