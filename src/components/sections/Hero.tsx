@@ -5,6 +5,7 @@ import Image from "next/image";
 import { useGSAP } from "@gsap/react";
 import { gsap, ScrollTrigger } from "@/lib/gsap";
 import InkReveal from "@/components/InkReveal";
+import Rift, { type RiftHandle } from "@/components/Rift";
 import HeroStats from "@/components/sections/HeroStats";
 import HeroSocials from "@/components/sections/HeroSocials";
 import { TextMarquee } from "@/components/ui/TextMarquee";
@@ -17,8 +18,27 @@ import zenChar from "@/app/assets/zen-full.webp";
 const MASK_COLOR: [number, number, number] = [255, 255, 255];
 const MASK_RGB = `rgb(${MASK_COLOR.join(",")})`;
 
-/** Scroll length of the hero, in viewport heights. */
+/** Scroll length of the P zoom-through, in viewport heights. */
 const SCROLL_VH = 340;
+
+/** Extra scroll after the P for the dimensional rift to tear open, in viewport heights. */
+const RIFT_VH = 220;
+
+/**
+ * What shows through the rift. Placeholder until the real image lands — swap for
+ * e.g. `<Image src={riftBg} alt="" fill sizes="100vw" className="object-cover" />`.
+ */
+const RIFT_WORLD = (
+  <div
+    className="absolute inset-0"
+    style={{
+      background:
+        "radial-gradient(ellipse at 30% 35%, rgba(120,70,230,0.9), transparent 55%)," +
+        "radial-gradient(ellipse at 75% 70%, rgba(70,30,160,0.9), transparent 60%)," +
+        "linear-gradient(135deg, #120826, #2a145e 50%, #0b0518)",
+    }}
+  />
+);
 
 /** Progress past which the cursor ink-carve turns on (P mostly zoomed through). */
 const INK_FROM = 0.4;
@@ -49,6 +69,9 @@ export default function Hero() {
   const zenRef = useRef<HTMLDivElement>(null);
   const coverRef = useRef<HTMLDivElement>(null);
   const uiRef = useRef<HTMLDivElement>(null);
+  const pZoneRef = useRef<HTMLDivElement>(null);
+  const riftZoneRef = useRef<HTMLDivElement>(null);
+  const riftRef = useRef<RiftHandle>(null);
   const revealRef = useRef(0);
   const [reduced, setReduced] = useState(false);
   const [inkOn, setInkOn] = useState(false);
@@ -82,7 +105,7 @@ export default function Hero() {
       gsap.set(coverRef.current, { filter: "invert(0)" });
       gsap.set(uiRef.current, { autoAlpha: 1 });
       const range = {
-        trigger: wrapRef.current,
+        trigger: pZoneRef.current,
         start: "top top",
         end: "bottom bottom",
         scrub: true as const,
@@ -124,8 +147,19 @@ export default function Hero() {
         { scale: 0.9, ease: "none", scrollTrigger: range }
       );
 
+      // Rift: tears open over the scroll that follows the P.
+      const riftSt = ScrollTrigger.create({
+        trigger: riftZoneRef.current,
+        start: "top top",
+        end: "bottom bottom",
+        scrub: true,
+        onUpdate: (self) => riftRef.current?.update(self.progress),
+      });
+      riftRef.current?.update(riftSt.progress);
+
       return () => {
         st.kill();
+        riftSt.kill();
         sceneTween.scrollTrigger?.kill();
         sceneTween.kill();
       };
@@ -139,9 +173,27 @@ export default function Hero() {
       className="relative w-full"
       style={{
         backgroundColor: MASK_RGB,
-        height: reduced ? undefined : `${SCROLL_VH}vh`,
+        height: reduced ? undefined : `${SCROLL_VH + RIFT_VH}vh`,
       }}
     >
+      {/* Scroll zones (layout-free markers): the P zoom, then the rift. The rift
+          zone starts where the P's scroll ends, so the two play back to back. */}
+      {!reduced && (
+        <>
+          <div
+            ref={pZoneRef}
+            aria-hidden
+            className="pointer-events-none absolute inset-x-0 top-0"
+            style={{ height: `${SCROLL_VH}vh` }}
+          />
+          <div
+            ref={riftZoneRef}
+            aria-hidden
+            className="pointer-events-none absolute inset-x-0"
+            style={{ top: `${SCROLL_VH - 100}vh`, height: `${RIFT_VH + 100}vh` }}
+          />
+        </>
+      )}
       <div className="sticky top-0 h-svh w-full overflow-hidden">
         {/* z-10 — the scene, hidden until carved away by the ink cover. */}
         <div ref={sceneRef} className="absolute inset-0 z-10 will-change-transform">
@@ -163,6 +215,13 @@ export default function Hero() {
           <div ref={coverRef} className="absolute inset-0 z-20 will-change-[filter]">
             <InkReveal maskColor={[0, 0, 0]} cursorInk={inkOn} />
           </div>
+        )}
+
+        {/* z-25 — dimensional rift to the next world; the character stays in front. */}
+        {!reduced && (
+          <Rift ref={riftRef} className="z-[25]">
+            {RIFT_WORLD}
+          </Rift>
         )}
 
         {/* z-30 — the character. Always on top of the ink cover, so the

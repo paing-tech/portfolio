@@ -381,9 +381,23 @@ export default function InkReveal({
     if (mask) startLoop();
   }, [mask, startLoop]);
 
-  const getRelativePos = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  const getRelativePos = (
+    el: HTMLCanvasElement,
+    p: { clientX: number; clientY: number }
+  ) => {
+    const rect = el.getBoundingClientRect();
+    return { x: p.clientX - rect.left, y: p.clientY - rect.top };
+  };
+
+  // Touch: carve under the finger. React's touch listeners are passive and we
+  // never preventDefault, so the same swipe still scrolls the page.
+  const onTouch = (e: React.TouchEvent<HTMLCanvasElement>, fresh: boolean) => {
+    const t = e.touches[0];
+    if (!t) return;
+    const pos = getRelativePos(e.currentTarget, t);
+    if (fresh) lastPosRef.current = pos; // new stroke — don't join to the last one
+    stampAlong(pos.x, pos.y);
+    startLoop();
   };
 
   return (
@@ -401,7 +415,7 @@ export default function InkReveal({
       onMouseEnter={
         cursorInk
           ? (e) => {
-              const pos = getRelativePos(e);
+              const pos = getRelativePos(e.currentTarget, e);
               lastPosRef.current = pos;
               stampAlong(pos.x, pos.y);
               startLoop();
@@ -411,13 +425,22 @@ export default function InkReveal({
       onMouseMove={
         cursorInk
           ? (e) => {
-              const pos = getRelativePos(e);
+              const pos = getRelativePos(e.currentTarget, e);
               stampAlong(pos.x, pos.y);
               startLoop();
             }
           : undefined
       }
       onMouseLeave={
+        cursorInk
+          ? () => {
+              lastPosRef.current = null;
+            }
+          : undefined
+      }
+      onTouchStart={cursorInk ? (e) => onTouch(e, true) : undefined}
+      onTouchMove={cursorInk ? (e) => onTouch(e, false) : undefined}
+      onTouchEnd={
         cursorInk
           ? () => {
               lastPosRef.current = null;

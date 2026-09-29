@@ -15,6 +15,30 @@
 /* iOS home-screen "edit mode" wobble. */
 @theme {
   --animate-jiggle: jiggle 0.25s ease-in-out infinite;
+  --animate-rift-flicker: rift-flicker 1.6s steps(1, end) infinite;
+
+  /* Uneven energy flicker on the rift's glowing edge. */
+  @keyframes rift-flicker {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    18% {
+      opacity: 0.82;
+    }
+    22% {
+      opacity: 1;
+    }
+    57% {
+      opacity: 0.9;
+    }
+    61% {
+      opacity: 0.75;
+    }
+    64% {
+      opacity: 1;
+    }
+  }
 
   @keyframes jiggle {
     0%,
