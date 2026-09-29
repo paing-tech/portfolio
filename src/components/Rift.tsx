@@ -20,10 +20,22 @@ interface RiftProps {
 const TEAR_END = 0.32;
 /** Progress by which the opening covers the screen (the rest is a hold). */
 const OPEN_END = 0.82;
-/** Crystal shards and sparks that break off the edge. */
-const SHARDS = 26;
-const SPARKS = 34;
-const PANES = 38;
+/** White dash patterns on the rim ([on, off, on, off, …] in px along the tear). */
+const DASH_THICK = [7, 29, 21, 47, 3, 19];
+const DASH_THIN = [19, 8, 3, 17, 41, 11];
+
+/** True if arc position `s` lands on an "on" stretch of a repeating dash pattern. */
+function onDash(pattern: number[], s: number) {
+  const cycle = pattern.reduce((t, v) => t + v, 0);
+  let p = ((s % cycle) + cycle) % cycle;
+  for (let i = 0; i < pattern.length; i += 2) {
+    if (p < pattern[i]) return true;
+    p -= pattern[i];
+    if (p < pattern[i + 1]) return false;
+    p -= pattern[i + 1];
+  }
+  return false;
+}
 
 const clamp01 = (n: number) => (n < 0 ? 0 : n > 1 ? 1 : n);
 
@@ -72,7 +84,7 @@ export default function Rift({ ref, children, className }: RiftProps) {
   const sizeRef = useRef({ w: 0, h: 0 });
   const progressRef = useRef(0);
 
-  // All randomness is fixed up front: noise lattices plus debris placement.
+  // All randomness is fixed up front: the noise lattices that shape the edge.
   const seed = useMemo(() => {
     const rand = mulberry32(11);
     const lattice = (octaves: number, shape = (v: number) => v * 2 - 1) =>
@@ -89,28 +101,6 @@ export default function Rift({ ref, children, className }: RiftProps) {
       // Spikes: mostly flat, occasionally long — linear interp makes them pointed.
       spikeUp: lattice(1, (v) => Math.pow(v, 3) * 2.2),
       spikeLo: lattice(1, (v) => Math.pow(v, 3) * 2.2),
-      panes: Array.from({ length: PANES }, (_, i) => ({
-        at: (Math.floor(i / 2) / (PANES / 2 - 1) * 2 - 1) * 0.92,
-        side: i % 2 === 0 ? 1 : -1,
-        span: 0.035 + rand() * 0.055,
-        depth: 0.025 + rand() * 0.09,
-        skew: rand() * 0.8 - 0.4,
-        opacity: 0.18 + rand() * 0.35,
-      })),
-      debris: Array.from({ length: SHARDS + SPARKS }, (_, i) => {
-        return {
-          shard: i < SHARDS,
-          at: rand() * 2 - 1, // position along the tear, -1 (top-left tip) … 1 (bottom-right)
-          side: rand() < 0.5 ? 1 : -1,
-          out: 0.3 + rand() * 1.4, // distance past the edge
-          drift: 0.5 + rand(), // how fast it flies off as the tear widens
-          size: 0.4 + rand() * 0.6,
-          spin: (rand() * 2 - 1) * 60,
-          tilt: (rand() * 2 - 1) * 0.7, // radians off the outward direction
-          slim: 0.4 + rand() * 0.25, // crystal width / length
-          forks: Array.from({ length: 7 }, () => rand()),
-        };
-      }),
     };
   }, []);
 
@@ -202,93 +192,36 @@ export default function Rift({ ref, children, className }: RiftProps) {
         upper.push([e.px + nx * e.up, e.py + ny * e.up]);
         lower.push([e.px - nx * e.lo, e.py - ny * e.lo]);
       }
+      // White dashes anchored to arc position along the tear, not to the path's
+      // length (which changes every frame and made SVG dasharrays jump around).
+      const dashes = (pattern: number[]) => {
+        let d = "";
+        for (const [line, shift] of [[upper, 0], [lower, 53]] as const) {
+          let run = false;
+          for (let i = 0; i < ss.length; i++) {
+            if (!onDash(pattern, ss[i] + shift)) {
+              run = false;
+              continue;
+            }
+            const [x, y] = line[i];
+            d += `${run ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`;
+            run = true;
+          }
+        }
+        return d;
+      };
+      const thickD = dashes(DASH_THICK);
+      const thinD = dashes(DASH_THIN);
+      svg.querySelectorAll<SVGPathElement>("[data-dash]").forEach((el) =>
+        el.setAttribute("d", el.dataset.dash === "thick" ? thickD : thinD)
+      );
+
       const ring = [...upper, ...lower.reverse()];
       const edge = "M" + ring.map(([x, y]) => `${x.toFixed(1)} ${y.toFixed(1)}`).join("L") + "Z";
 
       world.style.clipPath = `path("${edge}")`;
       svg.querySelectorAll<SVGPathElement>("[data-edge]").forEach((el) => el.setAttribute("d", edge));
 
-      // Fractured sheets stay rooted to the lips. Different depths and oblique
-      // facets suggest a surface breaking into glass, rather than a drawn border.
-      svg.querySelectorAll<SVGGElement>("[data-pane]").forEach((el, i) => {
-        const d = seed.panes[i];
-        const s = d.at * reach;
-        const born = clamp01((L - Math.abs(s)) / (reach * 0.15));
-        el.setAttribute("opacity", String(born * d.opacity * (1 - open * 0.6)));
-        if (born <= 0) return;
-        const span = Math.min(W, H) * d.span * born;
-        const depth = Math.min(W, H) * d.depth * born;
-        const lip = (at: number): Pt => {
-          const e = edgeAt(at);
-          const off = d.side > 0 ? e.up : -e.lo;
-          return [e.px + nx * off, e.py + ny * off];
-        };
-        const a = lip(s - span * 0.5), b = lip(s + span * 0.5);
-        const c: Pt = [b[0] + nx * depth * d.side + dx * span * d.skew,
-          b[1] + ny * depth * d.side + dy * span * d.skew];
-        const e: Pt = [a[0] + nx * depth * 0.55 * d.side - dx * span * 0.3,
-          a[1] + ny * depth * 0.55 * d.side - dy * span * 0.3];
-        const points = (pts: Pt[]) => pts.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
-        el.querySelectorAll<SVGPolygonElement>("[data-pane-face]").forEach(face => face.setAttribute("points", points([a, b, c, e])));
-        el.querySelectorAll<SVGPolygonElement>("[data-pane-facet]").forEach(face => face.setAttribute("points", points([a, c, e])));
-      });
-
-      // Branching stress fractures peel away from the lips, appearing after the
-      // advancing tear reaches them. Their roots stay attached when widening.
-      svg.querySelectorAll<SVGPathElement>("[data-fracture]").forEach((el, i) => {
-        const d = seed.debris[i];
-        const s = d.at * reach * 0.85;
-        const born = clamp01((L - Math.abs(s)) / (reach * 0.09));
-        const e = edgeAt(s);
-        const off = d.side > 0 ? e.up : -e.lo;
-        const x = e.px + nx * off, y = e.py + ny * off;
-        const length = Math.min(W, H) * (0.028 + d.size * 0.065) * born;
-        const direction = d.at < 0 ? -1 : 1;
-        const points: Pt[] = [[x, y]];
-        for (let j = 1; j <= 6; j++) {
-          const along = length * (j / 6 * 0.8 + (d.forks[j] - 0.5) * 0.35) * direction;
-          const out = length * (j / 6 + (d.forks[6 - j] - 0.5) * 0.28) * d.side;
-          points.push([x + dx * along + nx * out, y + dy * along + ny * out]);
-        }
-        const fork = points[2];
-        const branch: Pt[] = [fork,
-          [fork[0] - dx * length * 0.18 * direction + nx * length * 0.2 * d.side,
-            fork[1] - dy * length * 0.18 * direction + ny * length * 0.2 * d.side],
-          [fork[0] - dx * length * 0.08 * direction + nx * length * 0.42 * d.side,
-            fork[1] - dy * length * 0.08 * direction + ny * length * 0.42 * d.side],
-        ];
-        const line = (pts: Pt[]) => "M" + pts.map(([px, py]) => `${px.toFixed(1)} ${py.toFixed(1)}`).join("L");
-        el.setAttribute("d", line(points) + line(branch));
-        el.setAttribute("opacity", String(born * (0.5 + d.size * 0.4) * (1 - open * 0.65)));
-      });
-
-      // Debris: appears once the rip has passed its spot, then flies outward.
-      const nodes = svg.querySelectorAll<SVGElement>("[data-debris]");
-      seed.debris.forEach((d, i) => {
-        const el = nodes[i];
-        if (!el) return;
-        const s = d.at * reach;
-        const born = clamp01((L - Math.abs(s)) / (reach * 0.12));
-        if (born <= 0) {
-          el.setAttribute("opacity", "0");
-          return;
-        }
-        const e = edgeAt(s);
-        const off = (d.side > 0 ? e.up : e.lo) + Math.min(W, H) * 0.05 * d.out * born * (1 + open * 3 * d.drift);
-        const x = e.px + nx * off * d.side;
-        const y = e.py + ny * off * d.side;
-        el.setAttribute("opacity", String(born * (0.65 + 0.35 * d.size) * (1 - open * 0.65)));
-        if (d.shard) {
-          // Faceted diamonds and irregular chips fly outward and tumble.
-          const len = Math.min(W, H) * 0.025 * d.size * born;
-          const a = Math.atan2(ny * d.side, nx * d.side) + d.tilt + ((d.spin * (tear + open)) * Math.PI) / 180;
-          el.setAttribute("transform", `translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${a * 180 / Math.PI}) scale(${len.toFixed(2)})`);
-        } else {
-          el.setAttribute("cx", x.toFixed(1));
-          el.setAttribute("cy", y.toFixed(1));
-          el.setAttribute("r", (0.8 + 1.6 * d.size).toFixed(1));
-        }
-      });
     },
     [seed]
   );
@@ -342,7 +275,7 @@ export default function Rift({ ref, children, className }: RiftProps) {
           </filter>
           <filter id={`${id}-plasma`} x="-50%" y="-50%" width="200%" height="200%" colorInterpolationFilters="sRGB">
             <feTurbulence type="fractalNoise" baseFrequency="0.025 0.075" numOctaves={2} seed={8} result="noise" />
-            <feDisplacementMap in="SourceGraphic" in2="noise" scale={13} xChannelSelector="R" yChannelSelector="G" />
+            <feDisplacementMap in="SourceGraphic" in2="noise" scale={6} xChannelSelector="R" yChannelSelector="G" />
             <feGaussianBlur stdDeviation="0.65" />
           </filter>
           <linearGradient id={`${id}-light`} x1="0" y1="0" x2="1" y2="1">
@@ -353,81 +286,22 @@ export default function Rift({ ref, children, className }: RiftProps) {
             <stop offset="0.8" stopColor="#b95cff" />
             <stop offset="1" stopColor="#ffe0ff" />
           </linearGradient>
-          <linearGradient id={`${id}-glass`} x1="0" y1="1" x2="0.85" y2="0">
-            <stop stopColor="#6734c7" stopOpacity="0.8" />
-            <stop offset="0.4" stopColor="#9464ec" stopOpacity="0.3" />
-            <stop offset="0.72" stopColor="#dbcaff" stopOpacity="0.65" />
-            <stop offset="1" stopColor="#8052d6" stopOpacity="0.08" />
-          </linearGradient>
-          <linearGradient id={`${id}-mineral`} x1="0" y1="0" x2="1" y2="1">
-            <stop stopColor="#d5b3ff" />
-            <stop offset="0.45" stopColor="#7945b7" />
-            <stop offset="0.5" stopColor="#361450" />
-            <stop offset="1" stopColor="#160c29" />
-          </linearGradient>
         </defs>
-        <g strokeLinejoin="miter">
-          {seed.panes.map((_, i) => (
-            <g key={i} data-pane opacity={0}>
-              <g className="motion-safe:animate-rift-shimmer" style={{ animationDelay: `${-i * 0.37}s` }}>
-                <polygon data-pane-face fill={`url(#${id}-glass)`} stroke="#af80ed" strokeWidth={0.8} />
-                <polygon data-pane-facet fill={i % 3 === 0 ? "#a364e9" : "#e4d6ff"} fillOpacity={0.28} stroke="#ddaeff" strokeWidth={0.55} />
-              </g>
-            </g>
-          ))}
-        </g>
         <g fill="none" strokeLinejoin="round" strokeLinecap="round">
           <path data-edge stroke="#9727ec" strokeOpacity="0.48" strokeWidth={40} filter={`url(#${id}-bloom)`} />
           <g clipPath={`url(#${id}-opening)`}>
             <path data-edge stroke="#351061" strokeOpacity="0.65" strokeWidth={24} filter={`url(#${id}-depth)`} />
             <path data-edge stroke="#ac44ee" strokeOpacity="0.32" strokeWidth={48} filter={`url(#${id}-bloom)`} />
           </g>
-          <g className="motion-safe:animate-rift-flicker">
+          <g>
             <path data-edge stroke="#d64bff" strokeOpacity="0.95" strokeWidth={15} filter={`url(#${id}-halo)`} />
             <g filter={`url(#${id}-plasma)`}>
               <path data-edge stroke="#e683ff" strokeWidth={6} />
-              <path data-edge className="motion-safe:animate-rift-flow" stroke="#fff0ff" strokeWidth={3.4} strokeDasharray="7 29 21 47 3 19" />
+              <path data-dash="thick" stroke="#fff0ff" strokeWidth={3.4} />
             </g>
             <path data-edge stroke={`url(#${id}-light)`} strokeWidth={2.4} />
-            <path data-edge stroke="#fff8ff" strokeOpacity="0.95" strokeWidth={1.1} strokeDasharray="19 8 3 17 41 11" />
+            <path data-dash="thin" stroke="#fff8ff" strokeOpacity="0.95" strokeWidth={1.1} />
           </g>
-          {seed.debris.slice(0, SHARDS).map((_, i) => (
-            <g key={i} className="motion-safe:animate-rift-shimmer" style={{ animationDelay: `${-i * 0.23}s` }}>
-              <path data-fracture stroke={i % 3 === 0 ? "#a773e0" : "#c573e9"} strokeWidth={i % 3 === 0 ? 1.1 : 1.6} opacity={0} />
-            </g>
-          ))}
-        </g>
-        <g>
-          {seed.debris.map((d, i) =>
-            d.shard ? (
-              <g key={i} data-debris opacity={0}>
-                <polygon
-                  points={i % 3 === 0
-                    ? `1,0 0.15,${d.slim} -0.75,${d.slim * 0.3} -0.5,${-d.slim * 0.8} 0.3,${-d.slim}`
-                    : `1,0 -0.1,${d.slim} -0.8,0 0.1,${-d.slim * 0.8}`}
-                  fill={`url(#${id}-mineral)`}
-                  stroke="#bb8eec"
-                  strokeWidth={0.8}
-                  vectorEffect="non-scaling-stroke"
-                  strokeLinejoin="miter"
-                />
-                <polygon
-                  points={`1,0 -0.1,${d.slim} 0.05,0.02`}
-                  fill={i % 2 === 0 ? "#c88eff" : "#8e4dd3"}
-                  opacity={0.85}
-                />
-                <path
-                  d={`M1 0 L0.05 0.02 L${i % 3 === 0 ? "-0.5" : "0.1"} ${-d.slim * 0.8}`}
-                  fill="none"
-                  stroke="#efccff"
-                  strokeWidth={0.65}
-                  vectorEffect="non-scaling-stroke"
-                />
-              </g>
-            ) : (
-              <circle key={i} data-debris fill={i % 3 === 0 ? "#bcb2ce" : "#8763ac"} opacity={0} />
-            )
-          )}
         </g>
       </svg>
     </div>
