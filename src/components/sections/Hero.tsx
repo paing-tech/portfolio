@@ -24,20 +24,9 @@ const SCROLL_VH = 340;
 /** Extra scroll after the P for the dimensional rift to tear open, in viewport heights. */
 const RIFT_VH = 220;
 
-/**
- * What shows through the rift. Placeholder until the real image lands — swap for
- * e.g. `<Image src={riftBg} alt="" fill sizes="100vw" className="object-cover" />`.
- */
+/** The next scene, revealed through the rift. */
 const RIFT_WORLD = (
-  <div
-    className="absolute inset-0"
-    style={{
-      background:
-        "radial-gradient(ellipse at 30% 35%, rgba(120,70,230,0.9), transparent 55%)," +
-        "radial-gradient(ellipse at 75% 70%, rgba(70,30,160,0.9), transparent 60%)," +
-        "linear-gradient(135deg, #120826, #2a145e 50%, #0b0518)",
-    }}
-  />
+  <Image src="/exhibition.png" alt="" fill sizes="100vw" className="object-cover object-center" />
 );
 
 /** Progress past which the cursor ink-carve turns on (P mostly zoomed through). */
