@@ -39,6 +39,17 @@ const P_OPEN_END = 0.72;
 const ZEN_SCALE_IN = 0.7;
 const ZEN_SCALE_OUT = 0.85;
 
+/** Landing spot in exhibition.png (1920×1080), normalised: the floor circle's front edge. */
+const STAGE = { x: 0.5, y: 0.7, w: 1920, h: 1080 };
+/** Character art in zen-full.webp (3840×2675): feet line, height and width, normalised. */
+const ZEN_ART = { w: 3840, h: 2675, feet: 0.8187, height: 0.5114, width: 0.2817 };
+/** Character height on the stage, as a fraction of the hall image's on-screen height. */
+const STAGE_HEIGHT = 0.35;
+/** Rift progress over which the character walks into the hall: it waits until the
+ *  tear has run corner to corner (≈0.2), then walks in quickly. */
+const WALK_FROM = 0.2;
+const WALK_TO = 0.3;
+
 /** Roles scrolling beneath the name. */
 const ROLES = ["AI Engineer", "Software Engineer", "Full-stack Developer"];
 
@@ -56,6 +67,7 @@ export default function Hero() {
   const wrapRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<HTMLDivElement>(null);
   const zenRef = useRef<HTMLDivElement>(null);
+  const shadowRef = useRef<HTMLDivElement>(null);
   const coverRef = useRef<HTMLDivElement>(null);
   const uiRef = useRef<HTMLDivElement>(null);
   const pZoneRef = useRef<HTMLDivElement>(null);
@@ -96,7 +108,56 @@ export default function Hero() {
 
       revealRef.current = 0;
       setInkOn(false);
-      gsap.set(zenRef.current, { scale: ZEN_SCALE_IN });
+
+      // The character is driven by both zones, so it's placed from one function:
+      // P zoom → grows to its "after zoom" size; rift → shrinks and walks up
+      // until its feet stand on the hall's floor circle.
+      let pProg = 0;
+      let riftProg = 0;
+      const placeZen = () => {
+        const zen = zenRef.current;
+        const shadow = shadowRef.current;
+        if (!zen) return;
+        const W = zen.clientWidth;
+        const H = zen.clientHeight;
+
+        const tP = gsap.utils.clamp(0, 1, pProg / P_OPEN_END);
+        const sOut = gsap.utils.interpolate(ZEN_SCALE_IN, ZEN_SCALE_OUT, tP);
+        const walk = gsap.utils.clamp(0, 1, (riftProg - WALK_FROM) / (WALK_TO - WALK_FROM));
+        const tR = walk * walk * (3 - 2 * walk); // ease-in-out: sets off and settles smoothly
+
+        // Character art is object-contain in the full layer; scaled about its centre.
+        const fit = Math.min(W / ZEN_ART.w, H / ZEN_ART.h);
+        const artH = ZEN_ART.h * fit;
+        const feetLocal = (H - artH) / 2 + ZEN_ART.feet * artH;
+        // Hall is object-cover: where its floor circle lands on this screen.
+        const cover = Math.max(W / STAGE.w, H / STAGE.h);
+        const hallH = STAGE.h * cover;
+        const stageY = (H - hallH) / 2 + STAGE.y * hallH;
+        const sEnd = (STAGE_HEIGHT * hallH) / (ZEN_ART.height * artH);
+        const yEnd = stageY - (H / 2 + (feetLocal - H / 2) * sEnd);
+
+        const scale = gsap.utils.interpolate(sOut, sEnd, tR);
+        const y = yEnd * tR;
+        gsap.set(zen, { scale, y });
+
+        // Soft contact shadow under the feet, fading in as it lands.
+        if (shadow) {
+          const feetY = H / 2 + (feetLocal - H / 2) * scale + y;
+          const sw = ZEN_ART.width * ZEN_ART.w * fit * scale * 0.8;
+          gsap.set(shadow, {
+            x: W * STAGE.x - sw / 2,
+            y: feetY - sw * 0.09,
+            width: sw,
+            height: sw * 0.18,
+            opacity: tR,
+          });
+        }
+      };
+      const onResize = () => placeZen();
+      window.addEventListener("resize", onResize);
+      placeZen();
+
       gsap.set(coverRef.current, { filter: "invert(0)" });
       gsap.set(uiRef.current, { autoAlpha: 1 });
       const range = {
@@ -114,12 +175,9 @@ export default function Hero() {
           setPOpen(self.progress >= P_OPEN_END);
           // Back on the P-covered landing view → mountains hidden again.
           if (self.progress < P_OPEN_END) setSceneShown(false);
-          // Character grows from its "in the P" size to its "after zoom" size,
-          // reaching the latter as the P finishes opening.
+          pProg = self.progress;
+          placeZen();
           const t = gsap.utils.clamp(0, 1, self.progress / P_OPEN_END);
-          gsap.set(zenRef.current, {
-            scale: gsap.utils.interpolate(ZEN_SCALE_IN, ZEN_SCALE_OUT, t),
-          });
           // Ink cover: black at rest → white once the P has fully opened.
           gsap.set(coverRef.current, { filter: `invert(${t})` });
           // UI is "printed" on the P plane: each piece is pushed away from the
@@ -154,11 +212,14 @@ export default function Hero() {
         onUpdate: (self) => {
           riftRef.current?.update(self.progress);
           setRiftStarted(self.progress > 0.01);
+          riftProg = self.progress;
+          placeZen();
         },
       });
       riftRef.current?.update(riftSt.progress);
 
       return () => {
+        window.removeEventListener("resize", onResize);
         st.kill();
         riftSt.kill();
         sceneTween.scrollTrigger?.kill();
@@ -228,6 +289,19 @@ export default function Hero() {
           <Rift ref={riftRef} className="z-[25]">
             {RIFT_WORLD}
           </Rift>
+        )}
+
+        {/* z-29 — contact shadow for the character once it stands in the hall. */}
+        {!reduced && (
+          <div
+            ref={shadowRef}
+            aria-hidden
+            className="pointer-events-none absolute top-0 left-0 z-[29] rounded-[50%]"
+            style={{
+              opacity: 0,
+              background: "radial-gradient(closest-side, rgba(45, 35, 70, 0.32), rgba(45, 35, 70, 0))",
+            }}
+          />
         )}
 
         {/* z-30 — the character. Always on top of the ink cover, so the
