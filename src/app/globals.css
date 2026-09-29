@@ -16,6 +16,17 @@
 @theme {
   --animate-jiggle: jiggle 0.25s ease-in-out infinite;
   --animate-rift-flicker: rift-flicker 1.6s steps(1, end) infinite;
+  --animate-rift-flow: rift-flow 1.8s linear infinite;
+  --animate-rift-shimmer: rift-shimmer 2.7s ease-in-out infinite alternate;
+
+  @keyframes rift-flow {
+    to { stroke-dashoffset: -252; }
+  }
+
+  @keyframes rift-shimmer {
+    from { opacity: 0.48; }
+    to { opacity: 1; }
+  }
 
   /* Uneven energy flicker on the rift's glowing edge. */
   @keyframes rift-flicker {
