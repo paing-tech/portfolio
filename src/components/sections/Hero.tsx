@@ -64,6 +64,12 @@ export default function Hero() {
   const revealRef = useRef(0);
   const [reduced, setReduced] = useState(false);
   const [inkOn, setInkOn] = useState(false);
+  // Mountain-scene toggle: offered from the P opening until the rift starts. Its
+  // state carries through the rift; it resets once the P is back.
+  const [pOpen, setPOpen] = useState(false);
+  const [riftStarted, setRiftStarted] = useState(false);
+  const [sceneShown, setSceneShown] = useState(false);
+  const toggleReady = !reduced && pOpen && !riftStarted;
 
   // Records the visit so the count stays accurate; not displayed yet
   // (returns this visitor's number for a future "You're the Nth visitor").
@@ -105,6 +111,9 @@ export default function Hero() {
         onUpdate: (self) => {
           revealRef.current = self.progress;
           setInkOn(self.progress > INK_FROM);
+          setPOpen(self.progress >= P_OPEN_END);
+          // Back on the P-covered landing view → mountains hidden again.
+          if (self.progress < P_OPEN_END) setSceneShown(false);
           // Character grows from its "in the P" size to its "after zoom" size,
           // reaching the latter as the P finishes opening.
           const t = gsap.utils.clamp(0, 1, self.progress / P_OPEN_END);
@@ -142,7 +151,10 @@ export default function Hero() {
         start: "top top",
         end: "bottom bottom",
         scrub: true,
-        onUpdate: (self) => riftRef.current?.update(self.progress),
+        onUpdate: (self) => {
+          riftRef.current?.update(self.progress);
+          setRiftStarted(self.progress > 0.01);
+        },
       });
       riftRef.current?.update(riftSt.progress);
 
@@ -201,7 +213,12 @@ export default function Hero() {
             the wrapper's invert() filter fades it to white as the P opens.
             Skipped for reduced motion (scene just shows). */}
         {!reduced && (
-          <div ref={coverRef} className="absolute inset-0 z-20 will-change-[filter]">
+          <div
+            ref={coverRef}
+            className="absolute inset-0 z-20 transition-opacity duration-700 ease-out will-change-[filter]"
+            // Fades away entirely while the mountain toggle is on.
+            style={{ opacity: sceneShown ? 0 : 1 }}
+          >
             <InkReveal maskColor={[0, 0, 0]} cursorInk={inkOn} />
           </div>
         )}
@@ -275,6 +292,33 @@ export default function Hero() {
           <div data-drift className="absolute inset-x-4 bottom-8 md:inset-x-auto md:right-10 md:bottom-10">
             <HeroStats className="text-center md:justify-end" />
           </div>
+        </div>
+
+        {/* z-50 — mountain toggle (top-right): a thumbnail of the scene that reveals or hides it. */}
+        <div
+          className={`absolute top-6 right-6 z-50 transition-[opacity,visibility] duration-300 md:top-10 md:right-10 ${
+            toggleReady ? "visible opacity-100" : "invisible opacity-0"
+          }`}
+        >
+          <button
+            type="button"
+            onClick={() => setSceneShown((v) => !v)}
+            aria-pressed={sceneShown}
+            aria-label={sceneShown ? "Hide mountain background" : "Show mountain background"}
+            className="block cursor-pointer rounded-lg bg-white p-1.5 transition-transform duration-200 ease-out hover:scale-130 focus-visible:scale-130 motion-safe:hover:animate-jiggle motion-safe:focus-visible:animate-jiggle"
+          >
+            <span className="relative block h-12 w-[4.5rem] md:h-14 md:w-20">
+              <Image
+                src={heroScene}
+                alt=""
+                fill
+                sizes="80px"
+                className={`object-contain transition-opacity duration-300 ${
+                  sceneShown ? "opacity-100" : "opacity-35"
+                }`}
+              />
+            </span>
+          </button>
         </div>
       </div>
     </section>

@@ -134,7 +134,9 @@ export default function Rift({ ref, children, className }: RiftProps) {
         svg.style.visibility = "hidden";
         return;
       }
-      svg.style.visibility = "visible";
+      // Clear rather than "visible": an explicit visible would override the root's
+      // hidden (visibility inherits), leaving a frozen edge after scrolling back up.
+      svg.style.visibility = "";
 
       const tear = clamp01(p / TEAR_END);
       const open = clamp01(p / OPEN_END);
