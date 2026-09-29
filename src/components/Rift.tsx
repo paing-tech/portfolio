@@ -89,18 +89,66 @@ export default function Rift({ ref, children, className }: RiftProps) {
     const rand = mulberry32(11);
     const lattice = (octaves: number, shape = (v: number) => v * 2 - 1) =>
       Array.from({ length: octaves }, () => Float32Array.from({ length: 256 }, () => shape(rand())));
+    // Created in this fixed order so the tear keeps the same shape.
+    const meander = lattice(2);
+    const swellUp = lattice(2);
+    const swellLo = lattice(2);
+    const jagUp = lattice(4);
+    const jagLo = lattice(4);
+    // Fine sawtooth teeth along the whole edge.
+    const teethUp = lattice(1);
+    const teethLo = lattice(1);
+    // Spikes: mostly flat, occasionally long — linear interp makes them pointed.
+    const spikeUp = lattice(1, (v) => Math.pow(v, 3) * 2.2);
+    const spikeLo = lattice(1, (v) => Math.pow(v, 3) * 2.2);
+    // Rim sticks grow from the tear's biggest spikes. Spike tips sit on lattice
+    // points of the spike noise, so pick the 3 strongest per lip (spread apart)
+    // once here; positions are then stable, so sticks never hop between spikes.
+    const pickSpikes = (lat: Float32Array, offset: number, lip: number) => {
+      const cands: { i: number; v: number }[] = [];
+      // Spike lattice step is reach/23 along the tear, so ±16 stays well inside it
+      // (and skips the very centre, where the tear first punches through).
+      for (let i = -16; i <= 16; i++) if (Math.abs(i) >= 2) cands.push({ i, v: lat[i & 255] });
+      cands.sort((p1, p2) => p2.v - p1.v);
+      const chosen: { i: number; v: number }[] = [];
+      for (const c of cands) {
+        if (chosen.length >= 3) break;
+        if (chosen.every((k) => Math.abs(k.i - c.i) >= 5)) chosen.push(c);
+      }
+      // x: spike position in spike-lattice units along the tear (s = x · spike step).
+      return chosen.map((c) => ({ x: c.i - offset, lip }));
+    };
+    const makeStick = (
+      k: { x: number; lip: number },
+      lean = (rand() - 0.5) * 0.4,
+      heading?: number // fixed screen direction (radians, y down) instead of the lip's normal
+    ) => ({
+      ...k,
+      heading,
+      length: 0.14 + rand() * 0.1,
+      lean,
+      // Alternating turns so each stick zigzags like a crack rather than curling.
+      segs: Array.from({ length: 3 }, (_, i) => [0.5 + rand() * 0.1, (i % 2 ? 1 : -1) * (0.1 + rand() * 0.55)] as const),
+    });
+    // lip 1 = lower-left edge (spikeUp), -1 = upper-right edge (spikeLo, offset 5.3).
+    const sticks = [...pickSpikes(spikeUp[0], 0, 1), ...pickSpikes(spikeLo[0], 5.3, -1)]
+      .map((k) => makeStick(k))
+      // Drop the two lower-edge sticks near the tear's ends (screen corners).
+      .filter((k) => !(k.lip === 1 && (k.x === -15 || k.x === 13)));
+    // Centre spike on the lower edge, just below Zen's feet: runs out of its left
+    // side, heading left and slightly down.
+    sticks.push(makeStick({ x: 0, lip: 1 }, 0, Math.PI * 0.93));
     return {
-      meander: lattice(2),
-      swellUp: lattice(2),
-      swellLo: lattice(2),
-      jagUp: lattice(4),
-      jagLo: lattice(4),
-      // Fine sawtooth teeth along the whole edge.
-      teethUp: lattice(1),
-      teethLo: lattice(1),
-      // Spikes: mostly flat, occasionally long — linear interp makes them pointed.
-      spikeUp: lattice(1, (v) => Math.pow(v, 3) * 2.2),
-      spikeLo: lattice(1, (v) => Math.pow(v, 3) * 2.2),
+      meander,
+      swellUp,
+      swellLo,
+      jagUp,
+      jagLo,
+      teethUp,
+      teethLo,
+      spikeUp,
+      spikeLo,
+      sticks,
     };
   }, []);
 
@@ -220,7 +268,53 @@ export default function Rift({ ref, children, className }: RiftProps) {
       const edge = "M" + ring.map(([x, y]) => `${x.toFixed(1)} ${y.toFixed(1)}`).join("L") + "Z";
 
       world.style.clipPath = `path("${edge}")`;
+
+      // Rim sticks: a single glowing line continuing out from each spike tip, drawn
+      // with the rim's own layers so it reads as part of the rim. Rooted on the lip
+      // (so it rides outward with it) and growing longer as the rift opens.
+      const unitS = Math.min(W, H);
+      let sticksD = "";
+      for (const k of seed.sticks) {
+        const s0 = k.x * base * 0.35; // spike tip: lattice point of the spike noise
+        const born = clamp01((L - Math.abs(s0)) / (reach * 0.12));
+        if (born <= 0 || Math.abs(s0) >= L) continue;
+        const e = edgeAt(s0);
+        const off = k.lip > 0 ? e.up : -e.lo;
+        let x = e.px + nx * off, y = e.py + ny * off;
+        const length = unitS * k.length * born * (0.1 + 3 * open);
+        const total = k.segs.reduce((t, [share]) => t + share, 0);
+        // A fixed heading is the stick's overall direction: offset the start by the
+        // zigzag's average turn so the kinks don't swing it off course.
+        let turned = 0, avgTurn = 0;
+        for (const [share, turn] of k.segs) {
+          turned += turn;
+          avgTurn += turned * (share / total);
+        }
+        let a = k.heading !== undefined ? k.heading - avgTurn : Math.atan2(ny * k.lip, nx * k.lip) + k.lean;
+        sticksD += `M${x.toFixed(1)} ${y.toFixed(1)}`;
+        for (const [share, turn] of k.segs) {
+          a += turn;
+          x += Math.cos(a) * length * (share / total);
+          y += Math.sin(a) * length * (share / total);
+          sticksD += `L${x.toFixed(1)} ${y.toFixed(1)}`;
+        }
+      }
+      // Rim layers draw the edge and sticks as one path, so each glow layer
+      // composites once and the sticks meet the rim in a seamless junction.
+      svg.querySelectorAll<SVGPathElement>("[data-rim]").forEach((el) => el.setAttribute("d", edge + sticksD));
+      svg.querySelectorAll<SVGPathElement>("[data-stick]").forEach((el) => el.setAttribute("d", sticksD));
+
       svg.querySelectorAll<SVGPathElement>("[data-edge]").forEach((el) => el.setAttribute("d", edge));
+
+      // Portal fill: a uniform violet veil across the opening. Fades out as
+      // the rift opens fully.
+      const f = clamp01((open - 0.45) / 0.4);
+      const innerOpacity = emerge * (1 - f * f * (3 - 2 * f));
+      const inner = svg.querySelector<SVGGElement>("[data-inner]");
+      if (inner) {
+        inner.setAttribute("opacity", innerOpacity.toFixed(3));
+        inner.style.display = innerOpacity > 0 ? "" : "none";
+      }
 
     },
     [seed]
@@ -287,20 +381,30 @@ export default function Rift({ ref, children, className }: RiftProps) {
             <stop offset="1" stopColor="#ffe0ff" />
           </linearGradient>
         </defs>
+
+        {/* Portal fill: a uniform violet veil over the opening (see render). */}
+        <g data-inner>
+          <path data-edge fill="#7b3dff" fillOpacity={0.35} />
+        </g>
+
         <g fill="none" strokeLinejoin="round" strokeLinecap="round">
-          <path data-edge stroke="#9727ec" strokeOpacity="0.48" strokeWidth={40} filter={`url(#${id}-bloom)`} />
+          {/* data-rim layers carry the edge plus the sticks (see render). */}
+          <path data-rim stroke="#9727ec" strokeOpacity="0.48" strokeWidth={40} filter={`url(#${id}-bloom)`} />
           <g clipPath={`url(#${id}-opening)`}>
-            <path data-edge stroke="#351061" strokeOpacity="0.65" strokeWidth={24} filter={`url(#${id}-depth)`} />
-            <path data-edge stroke="#ac44ee" strokeOpacity="0.32" strokeWidth={48} filter={`url(#${id}-bloom)`} />
+            {/* Inner rim shadow: a dark band just inside the edge, then a wider falloff. */}
+            <path data-edge stroke="#12031f" strokeOpacity="0.9" strokeWidth={32} filter={`url(#${id}-depth)`} />
+            <path data-edge stroke="#2a0a4f" strokeOpacity="0.6" strokeWidth={70} filter={`url(#${id}-bloom)`} />
           </g>
           <g>
-            <path data-edge stroke="#d64bff" strokeOpacity="0.95" strokeWidth={15} filter={`url(#${id}-halo)`} />
+            <path data-rim stroke="#d64bff" strokeOpacity="0.95" strokeWidth={15} filter={`url(#${id}-halo)`} />
             <g filter={`url(#${id}-plasma)`}>
-              <path data-edge stroke="#e683ff" strokeWidth={6} />
+              <path data-rim stroke="#e683ff" strokeWidth={6} />
               <path data-dash="thick" stroke="#fff0ff" strokeWidth={3.4} />
             </g>
-            <path data-edge stroke={`url(#${id}-light)`} strokeWidth={2.4} />
+            <path data-rim stroke={`url(#${id}-light)`} strokeWidth={2.4} />
             <path data-dash="thin" stroke="#fff8ff" strokeOpacity="0.95" strokeWidth={1.1} />
+            {/* Sticks' white centre, like the rim's white core. */}
+            <path data-stick stroke="#fff8ff" strokeOpacity="0.95" strokeWidth={1.4} />
           </g>
         </g>
       </svg>
